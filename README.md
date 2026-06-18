@@ -175,3 +175,8 @@ and **icon** views with the segmented control in the toolbar.
 
 Images/OCR, audio/video, smart folders, auto-tagging, hybrid keyword+vector
 search, background indexing, file-system watching, and app notarization.
+
+## License
+
+Released under the [MIT License](LICENSE) © 2026 aayushale001. You're free to
+use, modify, and distribute it; just keep the copyright and license notice.
