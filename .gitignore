@@ -1,0 +1,26 @@
+# Secrets
+.env
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Swift / Xcode
+macos-app/.build/
+.build/
+*.xcodeproj/
+DerivedData/
+*.xcuserstate
+.swiftpm/
+
+# macOS
+.DS_Store
+
+# Local editor / tooling settings (not part of the project)
+.claude/
+.vscode/
+.idea/
+
+# App data (created at runtime in ~/.semantic_file_finder; never in-repo)

@@ -1,0 +1,23 @@
+Team Sync — Project Aurora
+Date: 2026-06-15
+
+Attendees: Priya, Marcus, Lena, Sam
+
+Decisions:
+- Ship the semantic search MVP behind a feature flag by end of quarter.
+- Use a local vector database so nothing leaves the user's machine.
+- Defer image and audio support until after the text MVP is validated.
+
+Action items:
+- Marcus: benchmark embedding latency on a 5,000 file corpus.
+- Lena: draft onboarding copy for the folder picker.
+- Sam: investigate how to open a PDF to a specific page from the results list.
+
+Open questions:
+- What is the right chunk size for long technical documents?
+- Should we deduplicate near-identical files before indexing?
+
+Notes:
+The recurring theme this week was keeping the tool simple and private. Everyone
+agreed that fast, meaning-based search over personal notes and papers is the core
+value, and that we should resist adding cloud features too early.

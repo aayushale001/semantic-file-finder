@@ -1,0 +1,31 @@
+# XcodeGen spec. Generate the Xcode project with:
+#   brew install xcodegen
+#   cd macos-app && xcodegen generate
+#   open SemanticFileFinder.xcodeproj
+name: SemanticFileFinder
+options:
+  bundleIdPrefix: com.semanticfilefinder
+  deploymentTarget:
+    macOS: "14.0"
+settings:
+  base:
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    SWIFT_VERSION: "5.0"
+targets:
+  SemanticFileFinder:
+    type: application
+    platform: macOS
+    sources:
+      - SemanticFileFinder
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.semanticfilefinder.app
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_LSApplicationCategoryType: "public.app-category.utilities"
+        # MVP dev tool: the App Sandbox is OFF so the app can run the Python
+        # helper via Process and read user-chosen folders. Turn this back on
+        # (with the right entitlements) before any distribution.
+        ENABLE_HARDENED_RUNTIME: NO
+        CODE_SIGN_ENTITLEMENTS: SemanticFileFinder.entitlements
+        CODE_SIGN_STYLE: Automatic

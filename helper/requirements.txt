@@ -1,0 +1,8 @@
+lancedb
+google-genai
+pymupdf
+python-docx
+python-dotenv
+pydantic
+typer
+rich

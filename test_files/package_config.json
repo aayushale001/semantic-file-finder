@@ -1,0 +1,14 @@
+{
+  "name": "aurora-search",
+  "version": "0.1.0",
+  "description": "Local semantic file search over personal notes, papers, and code.",
+  "private": true,
+  "settings": {
+    "embeddingProvider": "gemini",
+    "vectorStore": "lancedb",
+    "chunkSize": 1200,
+    "chunkOverlap": 200
+  },
+  "supportedExtensions": [".txt", ".md", ".pdf", ".docx", ".py", ".json"],
+  "keywords": ["semantic-search", "embeddings", "vector-database", "retrieval"]
+}
