@@ -91,12 +91,56 @@ def _column_values(tbl, column: str) -> list:
             return []
 
 
+def _rows(tbl, columns: List[str]) -> List[dict]:
+    """Read several columns as aligned row dicts (single projected scan)."""
+    try:
+        return tbl.to_lance().to_table(columns=columns).to_pylist()
+    except Exception:
+        try:
+            return tbl.to_arrow().select(columns).to_pylist()
+        except Exception:
+            return []
+
+
 def get_indexed_file_ids() -> set:
     """Set of file_ids already present — used to skip unchanged files."""
     tbl = get_table()
     if tbl is None:
         return set()
     return set(_column_values(tbl, "file_id"))
+
+
+def list_indexed_files() -> List[dict]:
+    """One entry per distinct indexed file (with chunk count), for the gallery."""
+    tbl = get_table()
+    if tbl is None:
+        return []
+    cols = ["file_path", "file_name", "file_extension", "modality",
+            "file_size_bytes", "file_modified_at", "indexed_at"]
+    by_path: dict = {}
+    for r in _rows(tbl, cols):
+        path = r.get("file_path")
+        if path is None:
+            continue
+        entry = by_path.get(path)
+        if entry is None:
+            by_path[path] = {
+                "file_path": path,
+                "file_name": r.get("file_name"),
+                "file_extension": r.get("file_extension"),
+                "modality": r.get("modality"),
+                "file_size_bytes": r.get("file_size_bytes"),
+                "file_modified_at": r.get("file_modified_at"),
+                "indexed_at": r.get("indexed_at"),
+                "chunk_count": 1,
+            }
+        else:
+            entry["chunk_count"] += 1
+            if (r.get("indexed_at") or "") > (entry["indexed_at"] or ""):
+                entry["indexed_at"] = r.get("indexed_at")
+    files = list(by_path.values())
+    files.sort(key=lambda e: (e["file_name"] or "").lower())
+    return files
 
 
 def search_chunks(query_embedding: List[float], limit: int = 10) -> List[SearchResult]:

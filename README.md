@@ -1,12 +1,25 @@
 # Semantic File Finder
 
 A native macOS app that indexes a folder of your files and lets you search them
-by **meaning** instead of filename. A SwiftUI front end drives a small Python
-helper that extracts text, embeds it with **Gemini Embedding 2**, and stores the
-vectors in a local **LanceDB** database. Everything stays on your machine.
+by **meaning** instead of filename — across text **and media**. A SwiftUI front
+end drives a small Python helper that embeds everything with **Gemini Embedding 2**
+and stores the vectors in a local **LanceDB** database. Because Gemini Embedding 2
+is natively multimodal, text, images, audio, and video all land in the **same
+vector space**, so a typed query like "sunset over the ocean" can match a photo or
+a video clip. Everything stays on your machine.
 
-Supported files: `.txt` `.md` `.pdf` `.docx` and code (`.py` `.js` `.ts` `.tsx`
-`.jsx` `.cpp` `.c` `.h` `.hpp` `.java` `.html` `.css` `.json`).
+Supported files:
+- **Text & docs**: `.txt` `.md` `.pdf` `.docx`
+- **Code**: `.py` `.js` `.ts` `.tsx` `.jsx` `.cpp` `.c` `.h` `.hpp` `.java` `.html` `.css` `.json`
+- **Images**: `.jpg` `.jpeg` `.png`
+- **Audio**: `.mp3` `.wav`  ·  **Video**: `.mp4` `.mov`
+
+Text/docs/code are extracted and chunked; images/audio/video are embedded directly
+as media. To stay fast on big files, video is sampled into evenly-spaced still
+frames and long audio into clips (both capped), so even a feature-length movie
+indexes in a bounded number of small embeddings — with live per-file progress.
+When nothing is searched, the app shows your **indexed files as a gallery** with
+thumbnails, switchable between list and icon views.
 
 ## Architecture
 
@@ -96,6 +109,7 @@ logs go to stderr and `~/.semantic_file_finder/logs/`.
 python helper/main.py index "/path/to/folder"     # add --force to re-index unchanged files
 python helper/main.py index "/path/to/folder" --progress   # stream NDJSON progress (used by the app)
 python helper/main.py search "transformer attention" --limit 10
+python helper/main.py list                          # distinct files in the index (powers the gallery)
 python helper/main.py status
 python helper/main.py reset
 python helper/main.py model-info

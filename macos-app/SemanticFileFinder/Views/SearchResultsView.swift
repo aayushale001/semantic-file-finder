@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import QuickLookThumbnailing
 
 /// The results area. Renders either a detailed list or a Finder-style icon grid,
 /// with empty states for "not searched yet" and "no matches".
@@ -88,7 +89,7 @@ struct ResultRow: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
-            FileIcon(ext: result.fileExtension, size: 30)
+            Thumbnail(path: result.filePath, ext: result.fileExtension, size: 30)
 
             VStack(alignment: .leading, spacing: 4) {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
@@ -142,7 +143,7 @@ struct ResultCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .top) {
-                FileIcon(ext: result.fileExtension, size: 46)
+                Thumbnail(path: result.filePath, ext: result.fileExtension, size: 46)
                 Spacer()
                 if let score = result.score {
                     ScoreBadge(score: score)
@@ -213,6 +214,9 @@ struct FileIcon: View {
         case ".pdf": return "doc.richtext"
         case ".md", ".txt": return "doc.text"
         case ".docx": return "doc.text.fill"
+        case ".jpg", ".jpeg", ".png": return "photo"
+        case ".mp3", ".wav": return "music.note"
+        case ".mp4", ".mov": return "film"
         case ".py", ".js", ".ts", ".tsx", ".jsx", ".cpp", ".c", ".h",
              ".hpp", ".java", ".html", ".css", ".json":
             return "chevron.left.forwardslash.chevron.right"
@@ -225,10 +229,56 @@ struct FileIcon: View {
         case ".pdf": return .red
         case ".md", ".txt": return .gray
         case ".docx": return .blue
+        case ".jpg", ".jpeg", ".png": return .green
+        case ".mp3", ".wav": return .pink
+        case ".mp4", ".mov": return .orange
         case ".py", ".js", ".ts", ".tsx", ".jsx", ".cpp", ".c", ".h",
              ".hpp", ".java", ".html", ".css", ".json":
             return .purple
         default: return .gray
+        }
+    }
+}
+
+/// A QuickLook content thumbnail (images / video / PDF) with a `FileIcon` fallback.
+struct Thumbnail: View {
+    let path: String
+    let ext: String
+    var size: CGFloat = 46
+
+    @State private var image: NSImage?
+
+    var body: some View {
+        Group {
+            if let image {
+                Image(nsImage: image)
+                    .resizable()
+                    .aspectRatio(contentMode: .fill)
+                    .frame(width: size, height: size)
+                    .clipShape(.rect(cornerRadius: size * 0.18))
+            } else {
+                FileIcon(ext: ext, size: size)
+            }
+        }
+        .task(id: path) {
+            guard Self.isThumbnailable(ext) else { return }
+            let url = URL(fileURLWithPath: path)
+            let scale = NSScreen.main?.backingScaleFactor ?? 2
+            let request = QLThumbnailGenerator.Request(
+                fileAt: url,
+                size: CGSize(width: size, height: size),
+                scale: scale,
+                representationTypes: .thumbnail
+            )
+            image = try? await QLThumbnailGenerator.shared
+                .generateBestRepresentation(for: request).nsImage
+        }
+    }
+
+    static func isThumbnailable(_ ext: String) -> Bool {
+        switch ext.lowercased() {
+        case ".jpg", ".jpeg", ".png", ".mp4", ".mov", ".pdf": return true
+        default: return false
         }
     }
 }

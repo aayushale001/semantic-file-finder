@@ -17,6 +17,7 @@ import typer
 
 import config
 import embeddings
+import media
 import scanner
 import vector_store
 from chunker import chunk_document
@@ -42,6 +43,62 @@ def _now_iso() -> str:
 def _preview(text: str) -> str:
     """A short, whitespace-collapsed preview (<= PREVIEW_MAX chars)."""
     return " ".join(text.split())[:config.PREVIEW_MAX]
+
+
+def _media_model_supported() -> bool:
+    """Media embedding needs the multimodal model, not the text-only fallback."""
+    return config.resolve_embedding_model().lower() != "gemini-embedding-001"
+
+
+_MEDIA_KIND = {"image": "Image", "audio": "Audio", "video": "Video"}
+
+
+def _media_preview(modality: str, file_name: str, segment: "media.MediaSegment") -> str:
+    """Human-readable label stored as the preview/full_text for a media segment."""
+    kind = _MEDIA_KIND.get(modality, modality.title())
+    if segment.label:
+        return f"{kind} {segment.label} — {file_name}"
+    return f"{kind} — {file_name}"
+
+
+def _index_media_file(
+    f: ScannedFile,
+    on_segment: Optional[Callable[[int, int], None]] = None,
+) -> List[ChunkRecord]:
+    """Segment a media file and embed each segment into the shared vector space.
+
+    `on_segment(done, total)` is called after each segment so a long file (e.g.
+    a feature-length video sampled into many frames) shows live sub-progress.
+    """
+    indexed_at = _now_iso()
+    records: List[ChunkRecord] = []
+    with media.segmented(f.file_path, f.modality) as segments:
+        seg_total = len(segments)
+        for done, seg in enumerate(segments, start=1):
+            vector = embeddings.embed_media_file(seg.path, seg.mime_type)
+            preview = _media_preview(f.modality, f.file_name, seg)
+            records.append(ChunkRecord(
+                chunk_id=scanner.compute_chunk_id(f.file_id, seg.index, preview),
+                file_id=f.file_id,
+                file_path=f.file_path,
+                file_name=f.file_name,
+                file_extension=f.file_extension,
+                modality=f.modality,
+                content_preview=preview,
+                full_text=preview,
+                page_number=None,
+                chunk_index=seg.index,
+                start_char=None,
+                end_char=None,
+                file_size_bytes=f.file_size_bytes,
+                file_modified_at=f.file_modified_at,
+                file_hash=f.file_hash,
+                embedding=vector,
+                indexed_at=indexed_at,
+            ))
+            if on_segment is not None:
+                on_segment(done, seg_total)
+    return records
 
 
 def run_index(
@@ -81,50 +138,86 @@ def run_index(
                 skipped_files += 1
                 continue
 
-            try:
-                units = extract_file(f.file_path, f.modality)
-            except Exception as exc:  # noqa: BLE001 - one bad file must not kill the job
-                log.exception("Extraction failed for %s", f.file_path)
-                errors.append(f"extract:{f.file_name}: {exc}")
-                continue
+            if f.modality in config.MEDIA_MODALITIES:
+                # ---- media: embed sampled segments (image / audio / video) ----
+                if not _media_model_supported():
+                    errors.append(
+                        f"media:{f.file_name}: needs gemini-embedding-2 "
+                        f"(text-only mode cannot embed media)"
+                    )
+                    continue
 
-            chunks = chunk_document(units, f.modality)
-            if not chunks:
-                skipped_files += 1
-                errors.append(f"empty:{f.file_name}: no extractable text")
-                continue
+                def _on_segment(done: int, seg_total: int) -> None:
+                    # Live sub-progress within a single (possibly long) media file.
+                    if progress is not None:
+                        progress({
+                            "event": "progress",
+                            "current": i - 1,          # files fully completed so far
+                            "total": total,
+                            "file_name": f.file_name,
+                            "segment_current": done,
+                            "segment_total": seg_total,
+                            "indexed_files": indexed_files,
+                            "skipped_files": skipped_files,
+                            "indexed_chunks": indexed_chunks,
+                        })
 
-            try:
-                vectors = embeddings.embed_batch(
-                    [c.text for c in chunks], task_type=embeddings.TASK_DOCUMENT
-                )
-            except Exception as exc:  # noqa: BLE001
-                log.exception("Embedding failed for %s", f.file_path)
-                errors.append(f"embed:{f.file_name}: {exc}")
-                continue
+                try:
+                    records = _index_media_file(f, on_segment=_on_segment)
+                except Exception as exc:  # noqa: BLE001 - one bad file must not kill the job
+                    log.exception("Media embedding failed for %s", f.file_path)
+                    errors.append(f"media:{f.file_name}: {exc}")
+                    continue
+                if not records:
+                    skipped_files += 1
+                    errors.append(f"empty:{f.file_name}: no media segments")
+                    continue
+            else:
+                # ---- text: extract -> chunk -> embed ----
+                try:
+                    units = extract_file(f.file_path, f.modality)
+                except Exception as exc:  # noqa: BLE001 - one bad file must not kill the job
+                    log.exception("Extraction failed for %s", f.file_path)
+                    errors.append(f"extract:{f.file_name}: {exc}")
+                    continue
 
-            indexed_at = _now_iso()
-            records: List[ChunkRecord] = []
-            for chunk, vector in zip(chunks, vectors):
-                records.append(ChunkRecord(
-                    chunk_id=scanner.compute_chunk_id(f.file_id, chunk.chunk_index, chunk.text),
-                    file_id=f.file_id,
-                    file_path=f.file_path,
-                    file_name=f.file_name,
-                    file_extension=f.file_extension,
-                    modality=f.modality,
-                    content_preview=_preview(chunk.text),
-                    full_text=chunk.text,
-                    page_number=chunk.page_number,
-                    chunk_index=chunk.chunk_index,
-                    start_char=chunk.start_char,
-                    end_char=chunk.end_char,
-                    file_size_bytes=f.file_size_bytes,
-                    file_modified_at=f.file_modified_at,
-                    file_hash=f.file_hash,
-                    embedding=vector,
-                    indexed_at=indexed_at,
-                ))
+                chunks = chunk_document(units, f.modality)
+                if not chunks:
+                    skipped_files += 1
+                    errors.append(f"empty:{f.file_name}: no extractable text")
+                    continue
+
+                try:
+                    vectors = embeddings.embed_batch(
+                        [c.text for c in chunks], task_type=embeddings.TASK_DOCUMENT
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    log.exception("Embedding failed for %s", f.file_path)
+                    errors.append(f"embed:{f.file_name}: {exc}")
+                    continue
+
+                indexed_at = _now_iso()
+                records = []
+                for chunk, vector in zip(chunks, vectors):
+                    records.append(ChunkRecord(
+                        chunk_id=scanner.compute_chunk_id(f.file_id, chunk.chunk_index, chunk.text),
+                        file_id=f.file_id,
+                        file_path=f.file_path,
+                        file_name=f.file_name,
+                        file_extension=f.file_extension,
+                        modality=f.modality,
+                        content_preview=_preview(chunk.text),
+                        full_text=chunk.text,
+                        page_number=chunk.page_number,
+                        chunk_index=chunk.chunk_index,
+                        start_char=chunk.start_char,
+                        end_char=chunk.end_char,
+                        file_size_bytes=f.file_size_bytes,
+                        file_modified_at=f.file_modified_at,
+                        file_hash=f.file_hash,
+                        embedding=vector,
+                        indexed_at=indexed_at,
+                    ))
 
             # Replace any previous version of this file, then store fresh chunks.
             vector_store.delete_file(f.file_path)
@@ -208,6 +301,17 @@ def status() -> None:
         _emit({"status": "success", **vector_store.get_status()})
     except Exception as exc:  # noqa: BLE001
         log.exception("status command failed")
+        _emit({"status": "error", "message": str(exc)})
+        raise typer.Exit(code=1)
+
+
+@app.command(name="list")
+def list_files() -> None:
+    """List the distinct files currently in the index (powers the app's gallery)."""
+    try:
+        _emit({"status": "success", "files": vector_store.list_indexed_files()})
+    except Exception as exc:  # noqa: BLE001
+        log.exception("list command failed")
         _emit({"status": "error", "message": str(exc)})
         raise typer.Exit(code=1)
 

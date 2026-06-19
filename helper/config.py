@@ -48,6 +48,8 @@ EMBEDDING_MODEL = os.getenv("GEMINI_EMBEDDING_MODEL", DEFAULT_EMBEDDING_MODEL).s
 # in the index metadata so the two can never silently diverge).
 EMBEDDING_DIMENSIONS = int(os.getenv("GEMINI_EMBEDDING_DIMENSIONS", "768"))
 EMBEDDING_BATCH_SIZE = int(os.getenv("GEMINI_EMBEDDING_BATCH_SIZE", "32"))
+# Per-request HTTP timeout (ms) so a hung API call can't stall indexing forever.
+REQUEST_TIMEOUT_MS = int(os.getenv("GEMINI_REQUEST_TIMEOUT_MS", "120000"))
 # When true, the text-only fallback model (gemini-embedding-001) is permitted.
 TEXT_ONLY_MODE = _env_bool("TEXT_ONLY_MODE", False)
 
@@ -113,7 +115,47 @@ SUPPORTED_EXTENSIONS = {
     ".html": "code",
     ".css": "code",
     ".json": "code",
+    # Media — embedded directly as bytes by gemini-embedding-2 (no text extraction).
+    ".jpg": "image",
+    ".jpeg": "image",
+    ".png": "image",
+    ".mp3": "audio",
+    ".wav": "audio",
+    ".mp4": "video",
+    ".mov": "video",
 }
+
+# Modalities embedded as raw media bytes rather than extracted text.
+MEDIA_MODALITIES = {"image", "audio", "video"}
+
+# MIME type per supported media extension (sent to the embedding API).
+MIME_BY_EXT = {
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".mp3": "audio/mpeg",
+    ".wav": "audio/wav",
+    ".mp4": "video/mp4",
+    ".mov": "video/quicktime",
+}
+
+# Audio is split into clips under the embedding API's 180s per-request limit; the
+# margin keeps us safely under the cap. (Video is sampled as frames instead.)
+AUDIO_SEGMENT_SECONDS = int(os.getenv("AUDIO_SEGMENT_SECONDS", "170"))
+# Segments larger than this are uploaded via the Files API instead of sent inline.
+MEDIA_INLINE_MAX_BYTES = int(os.getenv("MEDIA_INLINE_MAX_BYTES", str(15 * 1024 * 1024)))
+
+# Per-file caps so one huge file can't balloon into hundreds of API calls.
+# Video is sampled as still frames (cheap inline images); long audio is sampled
+# into a bounded number of clips spread across the file.
+MAX_VIDEO_FRAMES = int(os.getenv("MAX_VIDEO_FRAMES", "30"))
+MAX_AUDIO_SEGMENTS = int(os.getenv("MAX_AUDIO_SEGMENTS", "30"))
+# One video frame roughly every this many seconds (still capped by MAX_VIDEO_FRAMES).
+VIDEO_FRAME_INTERVAL_SECONDS = int(os.getenv("VIDEO_FRAME_INTERVAL_SECONDS", "10"))
+# Hard timeout (seconds) for any ffmpeg invocation (probe / slice / frame grab).
+FFMPEG_TIMEOUT_SECONDS = int(os.getenv("FFMPEG_TIMEOUT_SECONDS", "120"))
+# Skip whole-file content hashing above this size (hash is metadata only).
+MEDIA_HASH_MAX_BYTES = int(os.getenv("MEDIA_HASH_MAX_BYTES", str(64 * 1024 * 1024)))
 
 # Directories that are never scanned (in addition to anything starting with ".").
 IGNORED_DIRS = {

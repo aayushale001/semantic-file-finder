@@ -1,5 +1,6 @@
 lancedb
 google-genai
+imageio-ffmpeg
 pymupdf
 python-docx
 python-dotenv

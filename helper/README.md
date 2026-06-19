@@ -16,6 +16,7 @@ natural-language searches.
 ```bash
 python main.py index "/path/to/folder" [--force] [--progress] [--json]
 python main.py search "natural language query" [--limit 10]
+python main.py list
 python main.py status
 python main.py reset
 python main.py model-info
@@ -25,6 +26,7 @@ python main.py model-info
 |---|---|
 | `index` | `{indexed_files, skipped_files, indexed_chunks, errors[]}` |
 | `search` | `{query, results[]}` (sorted by similarity; `score` = cosine similarity) |
+| `list` | `{files[]}` — distinct indexed files (`file_path, file_name, file_extension, modality, chunk_count, …`) |
 | `status` | `{total_chunks, total_files, db_path}` |
 | `reset` | `{message}` (drops the table + index metadata) |
 | `model-info` | `{embedding_provider, embedding_model, embedding_dimensions, text_only_mode}` |
@@ -38,6 +40,18 @@ can show a live progress bar: a `{"event": "start", "total": N}` line, one
 …, "skipped_files": …}` line per file, then a final `{"event": "complete", …}`
 line carrying the usual summary fields.
 
+**Media (`gemini-embedding-2`).** Text/docs/code are extracted and chunked; images,
+audio, and video are embedded directly — no text extraction — into the *same*
+vector space, so a text query can match them. To stay bounded on big files,
+**video is sampled into evenly-spaced still frames** (one ~every
+`VIDEO_FRAME_INTERVAL_SECONDS`, capped at `MAX_VIDEO_FRAMES`) and **long audio into
+clips** under the 180s cap (capped at `MAX_AUDIO_SEGMENTS`) — so a feature-length
+film becomes a few dozen small image embeddings, not dozens of huge uploads. Every
+ffmpeg call and API request has a timeout, indexing reports live per-segment
+progress, and segments over `MEDIA_INLINE_MAX_BYTES` use the Files API. Media needs
+the multimodal model; with the `gemini-embedding-001` text-only fallback, media
+files are skipped (recorded in `errors[]`).
+
 ## Modules
 
 | File | Responsibility |
@@ -46,7 +60,8 @@ line carrying the usual summary fields.
 | `scanner.py` | recursive scan, ignore hidden/system dirs, deterministic IDs/hashes |
 | `extractors/` | `text`, `code`, `pdf` (PyMuPDF, per page), `docx` (python-docx) |
 | `chunker.py` | char-window chunks (text/pdf/docx) and line-range chunks (code) |
-| `embeddings.py` | Gemini embedding with batching, retries, L2 normalization |
+| `media.py` | split image/audio/video into embeddable segments (ffmpeg via imageio-ffmpeg) |
+| `embeddings.py` | Gemini embedding (text + media) with batching, retries, L2 normalization |
 | `vector_store.py` | LanceDB table, add/search/reset/status, index metadata |
 | `search.py` | embed query → search LanceDB → JSON results |
 | `models.py` | Pydantic models (`ChunkRecord`, `SearchResult`, …) |
@@ -62,6 +77,11 @@ line carrying the usual summary fields.
 | `TEXT_ONLY_MODE` | `false` | allow the `gemini-embedding-001` fallback |
 | `CHUNK_SIZE` / `CHUNK_OVERLAP` | `1200` / `200` | text chunking |
 | `CODE_CHUNK_LINES` | `120` | lines per code chunk |
+| `MAX_VIDEO_FRAMES` | `30` | max still frames sampled per video |
+| `VIDEO_FRAME_INTERVAL_SECONDS` | `10` | target spacing between sampled frames |
+| `AUDIO_SEGMENT_SECONDS` / `MAX_AUDIO_SEGMENTS` | `170` / `30` | audio clip length / max clips per file |
+| `MEDIA_INLINE_MAX_BYTES` | `15728640` | media segments larger than this use the Files API |
+| `FFMPEG_TIMEOUT_SECONDS` / `GEMINI_REQUEST_TIMEOUT_MS` | `120` / `120000` | hard timeouts so a bad file can't hang indexing |
 | `LOG_LEVEL` | `INFO` | logging verbosity (stderr/file) |
 
 ## Testing from the terminal

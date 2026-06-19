@@ -19,7 +19,7 @@ struct IndexProgressBanner: View {
                             .font(.callout.weight(.semibold))
                         Spacer()
                         if let progress, progress.total > 0 {
-                            Text("\(progress.current) of \(progress.total)")
+                            Text("\(progress.displayFileIndex) of \(progress.total)")
                                 .font(.caption.monospacedDigit())
                                 .foregroundStyle(.secondary)
                         }
@@ -65,7 +65,12 @@ struct IndexProgressBanner: View {
     private var detailText: String? {
         guard let progress else { return nil }
         var parts: [String] = []
-        if let name = progress.fileName { parts.append(name) }
+        if var name = progress.fileName {
+            if let current = progress.segmentCurrent, let total = progress.segmentTotal, total > 1 {
+                name += "  ·  part \(current) of \(total)"
+            }
+            parts.append(name)
+        }
         if progress.indexedFiles > 0 || progress.skippedFiles > 0 {
             parts.append("\(progress.indexedFiles) indexed · \(progress.skippedFiles) skipped")
         }

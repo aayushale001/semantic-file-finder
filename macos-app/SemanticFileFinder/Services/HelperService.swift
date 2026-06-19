@@ -83,6 +83,14 @@ final class HelperService {
         try await run(["status"], as: HelperStatus.self)
     }
 
+    func listFiles() async throws -> [IndexedFile] {
+        let response = try await run(["list"], as: ListFilesResponse.self)
+        if response.status != "success" {
+            throw HelperError.helperReturnedError(response.message ?? "Listing files failed")
+        }
+        return response.files ?? []
+    }
+
     func getModelInfo() async throws -> ModelInfo {
         try await run(["model-info"], as: ModelInfo.self)
     }

@@ -71,10 +71,15 @@ def scan_folder(folder: str) -> List[ScannedFile]:
 
             modified_at = _iso(st.st_mtime)
             file_id = compute_file_id(str(full), modified_at, st.st_size)
-            try:
-                file_hash = _hash_file(full)
-            except OSError as exc:
-                log.warning("Could not hash %s: %s", full, exc)
+            # file_hash is metadata only (change detection uses file_id), so we
+            # skip re-reading multi-GB media on every scan.
+            if st.st_size <= config.MEDIA_HASH_MAX_BYTES:
+                try:
+                    file_hash = _hash_file(full)
+                except OSError as exc:
+                    log.warning("Could not hash %s: %s", full, exc)
+                    file_hash = file_id
+            else:
                 file_hash = file_id
 
             found.append(ScannedFile(

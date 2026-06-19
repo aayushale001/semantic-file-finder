@@ -14,18 +14,27 @@ final class AppViewModel: ObservableObject {
     @Published var indexProgress: IndexProgress?
     @Published var isSearching = false
     @Published var hasSearched = false
+    @Published var indexedFiles: [IndexedFile] = []
+    @Published var isLoadingFiles = false
     @Published var errorMessage: String?
 
     private let helper = HelperService()
 
     func loadInitialState() async {
         await refreshStatus()
+        await refreshFiles()
         modelInfo = try? await helper.getModelInfo()
     }
 
     func refreshStatus() async {
         // Best-effort: a failure here shouldn't surface as an error alert.
         status = try? await helper.getStatus()
+    }
+
+    func refreshFiles() async {
+        isLoadingFiles = true
+        defer { isLoadingFiles = false }
+        indexedFiles = (try? await helper.listFiles()) ?? indexedFiles
     }
 
     func index(force: Bool = false) async {
@@ -42,6 +51,7 @@ final class AppViewModel: ObservableObject {
                 Task { @MainActor in self?.indexProgress = progress }
             }
             await refreshStatus()
+            await refreshFiles()
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -67,6 +77,7 @@ final class AppViewModel: ObservableObject {
             indexSummary = nil
             results = []
             hasSearched = false
+            indexedFiles = []
             await refreshStatus()
         } catch {
             errorMessage = error.localizedDescription
@@ -79,14 +90,31 @@ struct ContentView: View {
     @AppStorage("resultViewMode") private var viewMode: ResultViewMode = .list
     @State private var showResetConfirm = false
 
+    /// Show search results once a query has been run; otherwise the indexed-files gallery.
+    private var isSearchActive: Bool {
+        !viewModel.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && viewModel.hasSearched
+    }
+
     var body: some View {
         NavigationStack {
-            SearchResultsView(
-                results: viewModel.results,
-                hasSearched: viewModel.hasSearched,
-                isSearching: viewModel.isSearching,
-                viewMode: viewMode
-            )
+            Group {
+                if isSearchActive {
+                    SearchResultsView(
+                        results: viewModel.results,
+                        hasSearched: viewModel.hasSearched,
+                        isSearching: viewModel.isSearching,
+                        viewMode: viewMode
+                    )
+                } else {
+                    IndexedFilesView(
+                        files: viewModel.indexedFiles,
+                        isLoading: viewModel.isLoadingFiles,
+                        hasFolder: viewModel.selectedFolder != nil,
+                        viewMode: viewMode
+                    )
+                }
+            }
             .navigationTitle("Semantic File Finder")
             .navigationSubtitle(subtitle)
             .toolbar { toolbarContent }
@@ -160,7 +188,7 @@ struct ContentView: View {
         }
 
         ToolbarItemGroup(placement: .primaryAction) {
-            if !viewModel.results.isEmpty {
+            if !viewModel.results.isEmpty || !viewModel.indexedFiles.isEmpty {
                 Picker("View Mode", selection: $viewMode) {
                     ForEach(ResultViewMode.allCases) { mode in
                         Image(systemName: mode.systemImage)

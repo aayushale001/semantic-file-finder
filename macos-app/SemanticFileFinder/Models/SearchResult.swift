@@ -89,17 +89,28 @@ struct ModelInfo: Codable {
 
 /// A single progress update derived from the `index --progress` NDJSON stream.
 struct IndexProgress: Equatable {
-    let current: Int          // files processed so far
+    let current: Int          // files fully processed so far
     let total: Int            // total files to process
     let fileName: String?     // the file just processed (nil for the start event)
     let indexedFiles: Int
     let skippedFiles: Int
     let indexedChunks: Int
+    let segmentCurrent: Int?  // sub-progress within a media file (e.g. frame k…)
+    let segmentTotal: Int?    // …of m
 
-    /// Completion in 0…1, clamped and safe when `total` is 0.
+    /// Completion in 0…1, including sub-progress within the current file.
     var fraction: Double {
         guard total > 0 else { return 0 }
-        return min(1, max(0, Double(current) / Double(total)))
+        var done = Double(current)
+        if let total = segmentTotal, total > 0, let current = segmentCurrent {
+            done += min(1, Double(current) / Double(total))
+        }
+        return min(1, max(0, done / Double(total)))
+    }
+
+    /// 1-based index of the file being worked on (vs. one fully completed).
+    var displayFileIndex: Int {
+        segmentTotal != nil ? min(total, current + 1) : current
     }
 
     /// Files still to process.
@@ -116,6 +127,8 @@ struct IndexStreamLine: Decodable {
     let current: Int?
     let total: Int?
     let fileName: String?
+    let segmentCurrent: Int?
+    let segmentTotal: Int?
     // summary fields
     let indexedFiles: Int?
     let skippedFiles: Int?
@@ -125,6 +138,8 @@ struct IndexStreamLine: Decodable {
     enum CodingKeys: String, CodingKey {
         case event, status, message, current, total, errors
         case fileName = "file_name"
+        case segmentCurrent = "segment_current"
+        case segmentTotal = "segment_total"
         case indexedFiles = "indexed_files"
         case skippedFiles = "skipped_files"
         case indexedChunks = "indexed_chunks"
@@ -142,7 +157,9 @@ struct IndexStreamLine: Decodable {
             fileName: fileName,
             indexedFiles: indexedFiles ?? 0,
             skippedFiles: skippedFiles ?? 0,
-            indexedChunks: indexedChunks ?? 0
+            indexedChunks: indexedChunks ?? 0,
+            segmentCurrent: segmentCurrent,
+            segmentTotal: segmentTotal
         )
     }
 
@@ -180,4 +197,37 @@ enum ResultViewMode: String, CaseIterable, Identifiable {
         case .icons: return "square.grid.2x2"
         }
     }
+}
+
+// MARK: - Indexed files (the default "gallery" view)
+
+/// One distinct file in the index, decoded from the helper's `list` command.
+struct IndexedFile: Codable, Identifiable, Equatable {
+    var id: String { filePath }
+    let filePath: String
+    let fileName: String
+    let fileExtension: String
+    let modality: String
+    let chunkCount: Int
+    let fileSizeBytes: Int?
+    let fileModifiedAt: String?
+    let indexedAt: String?
+
+    enum CodingKeys: String, CodingKey {
+        case filePath = "file_path"
+        case fileName = "file_name"
+        case fileExtension = "file_extension"
+        case modality
+        case chunkCount = "chunk_count"
+        case fileSizeBytes = "file_size_bytes"
+        case fileModifiedAt = "file_modified_at"
+        case indexedAt = "indexed_at"
+    }
+}
+
+/// Wrapper for the `list` command response.
+struct ListFilesResponse: Codable {
+    let status: String
+    let files: [IndexedFile]?
+    let message: String?
 }
