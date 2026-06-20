@@ -97,10 +97,13 @@ struct ContentView: View {
     @AppStorage("resultViewMode") private var viewMode: ResultViewMode = .list
     @State private var showResetConfirm = false
 
-    /// Show search results once a query has been run; otherwise the indexed-files gallery.
+    /// Keep the results screen active after the first submitted search.
+    ///
+    /// Tying this to the live query text rebuilt the surrounding view when the
+    /// user cleared an old query and typed the first character of a new one,
+    /// which caused the search field to lose focus after that character.
     private var isSearchActive: Bool {
-        !viewModel.query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            && viewModel.hasSearched
+        viewModel.hasSearched
     }
 
     var body: some View {
@@ -125,20 +128,27 @@ struct ContentView: View {
             .navigationTitle("Semantic File Finder")
             .navigationSubtitle(subtitle)
             .toolbar { toolbarContent }
-            .searchable(
-                text: $viewModel.query,
-                placement: .toolbar,
-                prompt: "Search files by meaning…"
-            )
-            .onSubmit(of: .search) { Task { await viewModel.search() } }
             .onChange(of: viewModel.scope) {
                 if isSearchActive { Task { await viewModel.search() } }
             }
             .safeAreaInset(edge: .top, spacing: 0) {
-                if viewModel.isIndexing {
-                    IndexProgressBanner(progress: viewModel.indexProgress)
-                        .transition(.move(edge: .top).combined(with: .opacity))
+                VStack(spacing: 10) {
+                    SearchBar(
+                        query: $viewModel.query,
+                        scope: $viewModel.scope,
+                        isSearching: viewModel.isSearching,
+                        onSubmit: { Task { await viewModel.search() } }
+                    )
+                    .padding(.horizontal, 20)
+                    .padding(.top, 14)
+
+                    if viewModel.isIndexing {
+                        IndexProgressBanner(progress: viewModel.indexProgress)
+                            .transition(.move(edge: .top).combined(with: .opacity))
+                    }
                 }
+                .padding(.bottom, viewModel.isIndexing ? 0 : 12)
+                .frame(maxWidth: .infinity)
             }
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 StatusBar(viewModel: viewModel)
@@ -198,16 +208,6 @@ struct ContentView: View {
         }
 
         ToolbarItemGroup(placement: .primaryAction) {
-            if isSearchActive {
-                Picker("Scope", selection: $viewModel.scope) {
-                    ForEach(SearchScope.allCases) { scope in
-                        Label(scope.label, systemImage: scope.systemImage).tag(scope)
-                    }
-                }
-                .pickerStyle(.menu)
-                .help("Limit search to a kind of file (Images, Audio, Video, …)")
-            }
-
             if !viewModel.results.isEmpty || !viewModel.indexedFiles.isEmpty {
                 Picker("View Mode", selection: $viewMode) {
                     ForEach(ResultViewMode.allCases) { mode in

@@ -209,6 +209,7 @@ final class HelperService {
 
         let outPipe = Pipe()
         let errPipe = Pipe()
+        process.standardInput = FileHandle.nullDevice
         process.standardOutput = outPipe
         process.standardError = errPipe
         return (process, outPipe, errPipe)
