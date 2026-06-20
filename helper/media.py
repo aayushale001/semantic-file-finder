@@ -53,7 +53,10 @@ def _run(args: List[str], timeout: Optional[int] = None) -> Optional[subprocess.
     """Run ffmpeg with a hard timeout; None on timeout/failure."""
     try:
         return subprocess.run(
-            args, capture_output=True, text=True,
+            args,
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            text=True,
             timeout=timeout or config.FFMPEG_TIMEOUT_SECONDS,
         )
     except subprocess.TimeoutExpired:

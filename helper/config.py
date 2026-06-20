@@ -49,7 +49,11 @@ EMBEDDING_MODEL = os.getenv("GEMINI_EMBEDDING_MODEL", DEFAULT_EMBEDDING_MODEL).s
 EMBEDDING_DIMENSIONS = int(os.getenv("GEMINI_EMBEDDING_DIMENSIONS", "768"))
 EMBEDDING_BATCH_SIZE = int(os.getenv("GEMINI_EMBEDDING_BATCH_SIZE", "32"))
 # Per-request HTTP timeout (ms) so a hung API call can't stall indexing forever.
-REQUEST_TIMEOUT_MS = int(os.getenv("GEMINI_REQUEST_TIMEOUT_MS", "120000"))
+# Kept modest: a normal embed is a few seconds, and this is multiplied by retries,
+# so a large value would let one slow file freeze indexing for minutes.
+REQUEST_TIMEOUT_MS = int(os.getenv("GEMINI_REQUEST_TIMEOUT_MS", "45000"))
+# Max attempts per embedding call (incl. the first). Bounds worst-case stall.
+EMBED_MAX_ATTEMPTS = int(os.getenv("GEMINI_EMBED_MAX_ATTEMPTS", "3"))
 # Generative model used by "auto" search scope to classify a query's intended kind.
 GENERATION_MODEL = os.getenv("GEMINI_GENERATION_MODEL", "gemini-2.5-flash")
 # When true, the text-only fallback model (gemini-embedding-001) is permitted.
@@ -152,6 +156,9 @@ MEDIA_INLINE_MAX_BYTES = int(os.getenv("MEDIA_INLINE_MAX_BYTES", str(15 * 1024 *
 # into a bounded number of clips spread across the file.
 MAX_VIDEO_FRAMES = int(os.getenv("MAX_VIDEO_FRAMES", "30"))
 MAX_AUDIO_SEGMENTS = int(os.getenv("MAX_AUDIO_SEGMENTS", "30"))
+# A media file's segments (audio clips / video frames) embed concurrently, since
+# each is an independent API call; this bounds how many run at once.
+MEDIA_EMBED_CONCURRENCY = int(os.getenv("MEDIA_EMBED_CONCURRENCY", "5"))
 # One video frame roughly every this many seconds (still capped by MAX_VIDEO_FRAMES).
 VIDEO_FRAME_INTERVAL_SECONDS = int(os.getenv("VIDEO_FRAME_INTERVAL_SECONDS", "10"))
 # Hard timeout (seconds) for any ffmpeg invocation (probe / slice / frame grab).

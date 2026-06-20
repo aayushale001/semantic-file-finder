@@ -7,6 +7,7 @@ file.
 """
 from __future__ import annotations
 
+import concurrent.futures
 import json
 import logging
 import sys
@@ -71,11 +72,33 @@ def _index_media_file(
     a feature-length video sampled into many frames) shows live sub-progress.
     """
     indexed_at = _now_iso()
-    records: List[ChunkRecord] = []
     with media.segmented(f.file_path, f.modality) as segments:
         seg_total = len(segments)
-        for done, seg in enumerate(segments, start=1):
-            vector = embeddings.embed_media_file(seg.path, seg.mime_type)
+        if seg_total == 0:
+            return []
+
+        # Embed segments concurrently — a long audio/video file has many
+        # independent clips/frames, and each embed is its own (slow-ish) API call.
+        seg_by_index = {seg.index: seg for seg in segments}
+        vectors: dict = {}
+        workers = max(1, min(config.MEDIA_EMBED_CONCURRENCY, seg_total))
+        done = 0
+        with concurrent.futures.ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = {
+                pool.submit(embeddings.embed_media_file, seg.path, seg.mime_type): seg.index
+                for seg in segments
+            }
+            for future in concurrent.futures.as_completed(futures):
+                # A segment failing after retries fails the whole file (so it's
+                # retried next run rather than left partially indexed).
+                vectors[futures[future]] = future.result()
+                done += 1
+                if on_segment is not None:
+                    on_segment(done, seg_total)
+
+        records: List[ChunkRecord] = []
+        for index in sorted(vectors):
+            seg = seg_by_index[index]
             preview = _media_preview(f.modality, f.file_name, seg)
             records.append(ChunkRecord(
                 chunk_id=scanner.compute_chunk_id(f.file_id, seg.index, preview),
@@ -93,11 +116,9 @@ def _index_media_file(
                 file_size_bytes=f.file_size_bytes,
                 file_modified_at=f.file_modified_at,
                 file_hash=f.file_hash,
-                embedding=vector,
+                embedding=vectors[index],
                 indexed_at=indexed_at,
             ))
-            if on_segment is not None:
-                on_segment(done, seg_total)
     return records
 
 
@@ -137,6 +158,19 @@ def run_index(
             if not force and f.file_id in existing_ids:
                 skipped_files += 1
                 continue
+
+            # Announce the file before (possibly slow) extraction/embedding so the
+            # banner reflects the *active* file, not just the last completed one.
+            if progress is not None:
+                progress({
+                    "event": "progress",
+                    "current": i - 1,
+                    "total": total,
+                    "file_name": f.file_name,
+                    "indexed_files": indexed_files,
+                    "skipped_files": skipped_files,
+                    "indexed_chunks": indexed_chunks,
+                })
 
             if f.modality in config.MEDIA_MODALITIES:
                 # ---- media: embed sampled segments (image / audio / video) ----

@@ -50,7 +50,7 @@ def _normalize(vec: List[float]) -> List[float]:
     return [x / norm for x in vec]
 
 
-def _with_retries(fn: Callable[[], T], label: str, attempts: int = 5) -> T:
+def _with_retries(fn: Callable[[], T], label: str, attempts: int = config.EMBED_MAX_ATTEMPTS) -> T:
     """Run `fn`, retrying transient failures with exponential backoff."""
     last_err: Exception | None = None
     for attempt in range(attempts):
