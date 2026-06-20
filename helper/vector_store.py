@@ -143,18 +143,24 @@ def list_indexed_files() -> List[dict]:
     return files
 
 
-def search_chunks(query_embedding: List[float], limit: int = 10) -> List[SearchResult]:
+def search_chunks(
+    query_embedding: List[float],
+    limit: int = 10,
+    modalities: Optional[set] = None,
+) -> List[SearchResult]:
     tbl = get_table()
     if tbl is None:
         return []
     # NB: no .select() projection — LanceDB is deprecating auto-inclusion of the
     # `_distance` score when columns are projected, and we rely on that score.
-    rows = (
-        tbl.search(query_embedding)
-        .metric("cosine")
-        .limit(limit)
-        .to_list()
-    )
+    query = tbl.search(query_embedding).metric("cosine")
+    if modalities:
+        # Prefilter so the limit applies *after* restricting to the chosen kinds
+        # (text and media occupy different regions of the space — the "modality
+        # gap" — so without this, media is crowded out of mixed results).
+        quoted = ", ".join("'" + m.replace("'", "''") + "'" for m in sorted(modalities))
+        query = query.where(f"modality IN ({quoted})", prefilter=True)
+    rows = query.limit(limit).to_list()
     results: List[SearchResult] = []
     for r in rows:
         dist = r.get("_distance")

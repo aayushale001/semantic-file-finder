@@ -14,6 +14,7 @@ final class AppViewModel: ObservableObject {
     @Published var indexProgress: IndexProgress?
     @Published var isSearching = false
     @Published var hasSearched = false
+    @Published var scope: SearchScope = .all
     @Published var indexedFiles: [IndexedFile] = []
     @Published var isLoadingFiles = false
     @Published var errorMessage: String?
@@ -64,7 +65,7 @@ final class AppViewModel: ObservableObject {
         hasSearched = true
         defer { isSearching = false }
         do {
-            results = try await helper.search(query: trimmed)
+            results = try await helper.search(query: trimmed, scope: scope)
         } catch {
             errorMessage = error.localizedDescription
             results = []
@@ -124,6 +125,9 @@ struct ContentView: View {
                 prompt: "Search files by meaning…"
             )
             .onSubmit(of: .search) { Task { await viewModel.search() } }
+            .onChange(of: viewModel.scope) {
+                if isSearchActive { Task { await viewModel.search() } }
+            }
             .safeAreaInset(edge: .top, spacing: 0) {
                 if viewModel.isIndexing {
                     IndexProgressBanner(progress: viewModel.indexProgress)
@@ -188,6 +192,16 @@ struct ContentView: View {
         }
 
         ToolbarItemGroup(placement: .primaryAction) {
+            if isSearchActive {
+                Picker("Scope", selection: $viewModel.scope) {
+                    ForEach(SearchScope.allCases) { scope in
+                        Label(scope.label, systemImage: scope.systemImage).tag(scope)
+                    }
+                }
+                .pickerStyle(.menu)
+                .help("Limit search to a kind of file (Images, Audio, Video, …)")
+            }
+
             if !viewModel.results.isEmpty || !viewModel.indexedFiles.isEmpty {
                 Picker("View Mode", selection: $viewMode) {
                     ForEach(ResultViewMode.allCases) { mode in

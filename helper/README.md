@@ -15,7 +15,7 @@ natural-language searches.
 
 ```bash
 python main.py index "/path/to/folder" [--force] [--progress] [--json]
-python main.py search "natural language query" [--limit 10]
+python main.py search "natural language query" [--limit 10] [--scope all|documents|images|audio|video]
 python main.py list
 python main.py status
 python main.py reset
@@ -25,7 +25,7 @@ python main.py model-info
 | Command | Returns |
 |---|---|
 | `index` | `{indexed_files, skipped_files, indexed_chunks, errors[]}` |
-| `search` | `{query, results[]}` (sorted by similarity; `score` = cosine similarity) |
+| `search` | `{query, scope, results[]}` (sorted by similarity; `--scope` limits to a kind) |
 | `list` | `{files[]}` — distinct indexed files (`file_path, file_name, file_extension, modality, chunk_count, …`) |
 | `status` | `{total_chunks, total_files, db_path}` |
 | `reset` | `{message}` (drops the table + index metadata) |
@@ -51,6 +51,13 @@ ffmpeg call and API request has a timeout, indexing reports live per-segment
 progress, and segments over `MEDIA_INLINE_MAX_BYTES` use the Files API. Media needs
 the multimodal model; with the `gemini-embedding-001` text-only fallback, media
 files are skipped (recorded in `errors[]`).
+
+**Modality gap & `--scope`.** Text and media occupy different regions of the
+shared space, so for a text query the text documents score higher than images of
+the same subject and crowd them out of a mixed ranking. `--scope images` (or
+`audio` / `video` / `documents`) prefilters to one kind so the best matches of
+that kind surface; `--scope all` (default) ranks everything together by raw
+similarity.
 
 ## Modules
 

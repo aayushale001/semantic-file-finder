@@ -284,10 +284,14 @@ def index(
 def search(
     query: str = typer.Argument(..., help="Natural-language query"),
     limit: int = typer.Option(10, "--limit", help="Max results"),
+    scope: str = typer.Option(
+        "all", "--scope",
+        help="Restrict to a kind: all | documents | images | audio | video",
+    ),
 ) -> None:
-    """Search indexed files by meaning."""
+    """Search indexed files by meaning, optionally restricted to one kind."""
     try:
-        _emit(run_search(query, limit=limit))
+        _emit(run_search(query, limit=limit, scope=scope))
     except Exception as exc:  # noqa: BLE001
         log.exception("search command failed")
         _emit({"status": "error", "message": str(exc)})

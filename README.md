@@ -6,7 +6,10 @@ end drives a small Python helper that embeds everything with **Gemini Embedding 
 and stores the vectors in a local **LanceDB** database. Because Gemini Embedding 2
 is natively multimodal, text, images, audio, and video all land in the **same
 vector space**, so a typed query like "sunset over the ocean" can match a photo or
-a video clip. Everything stays on your machine.
+a video clip. Text and media occupy different regions of that space, so use the
+search **scope** (All / Documents / Images / Audio / Video) to surface a specific
+kind — scoping to *Images* finds photos that a mixed ranking would otherwise bury.
+Everything stays on your machine.
 
 Supported files:
 - **Text & docs**: `.txt` `.md` `.pdf` `.docx`
@@ -109,6 +112,7 @@ logs go to stderr and `~/.semantic_file_finder/logs/`.
 python helper/main.py index "/path/to/folder"     # add --force to re-index unchanged files
 python helper/main.py index "/path/to/folder" --progress   # stream NDJSON progress (used by the app)
 python helper/main.py search "transformer attention" --limit 10
+python helper/main.py search "people smiling" --scope images   # restrict to a kind: documents|images|audio|video
 python helper/main.py list                          # distinct files in the index (powers the gallery)
 python helper/main.py status
 python helper/main.py reset

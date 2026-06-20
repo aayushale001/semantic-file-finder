@@ -231,3 +231,33 @@ struct ListFilesResponse: Codable {
     let files: [IndexedFile]?
     let message: String?
 }
+
+// MARK: - Search scope
+
+/// Restricts a search to one kind of file. Sidesteps the text/media "modality
+/// gap" — without it, text documents out-rank images/audio/video in a mixed list.
+enum SearchScope: String, CaseIterable, Identifiable {
+    case all, documents, images, audio, video
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .all: return "All"
+        case .documents: return "Documents"
+        case .images: return "Images"
+        case .audio: return "Audio"
+        case .video: return "Video"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .all: return "square.grid.2x2"
+        case .documents: return "doc.text"
+        case .images: return "photo"
+        case .audio: return "music.note"
+        case .video: return "film"
+        }
+    }
+}
