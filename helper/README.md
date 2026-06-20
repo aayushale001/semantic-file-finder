@@ -15,7 +15,7 @@ natural-language searches.
 
 ```bash
 python main.py index "/path/to/folder" [--force] [--progress] [--json]
-python main.py search "natural language query" [--limit 10] [--scope all|documents|images|audio|video]
+python main.py search "natural language query" [--limit 10] [--scope auto|all|documents|images|audio|video]
 python main.py list
 python main.py status
 python main.py reset
@@ -56,8 +56,13 @@ files are skipped (recorded in `errors[]`).
 shared space, so for a text query the text documents score higher than images of
 the same subject and crowd them out of a mixed ranking. `--scope images` (or
 `audio` / `video` / `documents`) prefilters to one kind so the best matches of
-that kind surface; `--scope all` (default) ranks everything together by raw
-similarity.
+that kind surface. The default `--scope auto` first checks the query for keyword
+cues (photo, pdf, clip, podcast, …) and resolves the kind with **no API call**;
+only when there's no clear cue does it ask a small generative model
+(`GEMINI_GENERATION_MODEL`) to read the intent. When the kind is still unclear (or
+`--scope all`), results are a **reciprocal-rank-fusion blend** across kinds, so
+images/audio/video are fairly represented. The response includes `detected_scope`
+and `resolved_scope` so callers can show what was searched.
 
 ## Modules
 
@@ -70,7 +75,8 @@ similarity.
 | `media.py` | split image/audio/video into embeddable segments (ffmpeg via imageio-ffmpeg) |
 | `embeddings.py` | Gemini embedding (text + media) with batching, retries, L2 normalization |
 | `vector_store.py` | LanceDB table, add/search/reset/status, index metadata |
-| `search.py` | embed query → search LanceDB → JSON results |
+| `search.py` | embed query → (auto-scope / blend) → search LanceDB → JSON results |
+| `intent.py` | classify a query's intended kind for `--scope auto` (keyword cues first, generative model only when unclear) |
 | `models.py` | Pydantic models (`ChunkRecord`, `SearchResult`, …) |
 
 ## Environment variables
@@ -80,6 +86,7 @@ similarity.
 | `GEMINI_API_KEY` | — | required for `index`/`search` |
 | `APP_DATA_DIR` | `~/.semantic_file_finder` | data/index/logs location |
 | `GEMINI_EMBEDDING_MODEL` | `gemini-embedding-2` | embedding model |
+| `GEMINI_GENERATION_MODEL` | `gemini-2.5-flash` | model for `--scope auto` fallback when keyword cues don't resolve the kind |
 | `GEMINI_EMBEDDING_DIMENSIONS` | `768` | output dimensionality |
 | `TEXT_ONLY_MODE` | `false` | allow the `gemini-embedding-001` fallback |
 | `CHUNK_SIZE` / `CHUNK_OVERLAP` | `1200` / `200` | text chunking |

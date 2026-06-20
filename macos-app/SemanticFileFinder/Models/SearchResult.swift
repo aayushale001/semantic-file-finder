@@ -26,8 +26,23 @@ struct SearchResult: Codable, Identifiable, Equatable {
 struct SearchResponse: Codable {
     let status: String
     let query: String?
+    let scope: String?
+    let resolvedScope: String?    // the kind actually searched (auto may resolve to one)
+    let detectedScope: String?    // what `auto` classified the query as (nil otherwise)
     let results: [SearchResult]?
     let message: String?
+
+    enum CodingKeys: String, CodingKey {
+        case status, query, scope, results, message
+        case resolvedScope = "resolved_scope"
+        case detectedScope = "detected_scope"
+    }
+}
+
+/// What a search returns to the UI: the hits plus the kind actually searched.
+struct SearchOutcome {
+    let results: [SearchResult]
+    let resolvedScope: String?
 }
 
 /// Response from the `index` command.
@@ -237,12 +252,13 @@ struct ListFilesResponse: Codable {
 /// Restricts a search to one kind of file. Sidesteps the text/media "modality
 /// gap" — without it, text documents out-rank images/audio/video in a mixed list.
 enum SearchScope: String, CaseIterable, Identifiable {
-    case all, documents, images, audio, video
+    case auto, all, documents, images, audio, video
 
     var id: String { rawValue }
 
     var label: String {
         switch self {
+        case .auto: return "Auto"
         case .all: return "All"
         case .documents: return "Documents"
         case .images: return "Images"
@@ -253,11 +269,24 @@ enum SearchScope: String, CaseIterable, Identifiable {
 
     var systemImage: String {
         switch self {
+        case .auto: return "sparkles"
         case .all: return "square.grid.2x2"
         case .documents: return "doc.text"
         case .images: return "photo"
         case .audio: return "music.note"
         case .video: return "film"
+        }
+    }
+
+    /// Friendly label for a kind the backend resolved to (incl. the "any" blend).
+    static func friendlyName(forResolved raw: String?) -> String? {
+        switch raw {
+        case "documents": return "Documents"
+        case "images": return "Images"
+        case "audio": return "Audio"
+        case "video": return "Video"
+        case "any", "all": return "All kinds"
+        default: return nil
         }
     }
 }

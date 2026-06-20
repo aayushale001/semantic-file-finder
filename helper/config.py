@@ -50,6 +50,8 @@ EMBEDDING_DIMENSIONS = int(os.getenv("GEMINI_EMBEDDING_DIMENSIONS", "768"))
 EMBEDDING_BATCH_SIZE = int(os.getenv("GEMINI_EMBEDDING_BATCH_SIZE", "32"))
 # Per-request HTTP timeout (ms) so a hung API call can't stall indexing forever.
 REQUEST_TIMEOUT_MS = int(os.getenv("GEMINI_REQUEST_TIMEOUT_MS", "120000"))
+# Generative model used by "auto" search scope to classify a query's intended kind.
+GENERATION_MODEL = os.getenv("GEMINI_GENERATION_MODEL", "gemini-2.5-flash")
 # When true, the text-only fallback model (gemini-embedding-001) is permitted.
 TEXT_ONLY_MODE = _env_bool("TEXT_ONLY_MODE", False)
 

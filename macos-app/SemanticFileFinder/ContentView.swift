@@ -14,7 +14,8 @@ final class AppViewModel: ObservableObject {
     @Published var indexProgress: IndexProgress?
     @Published var isSearching = false
     @Published var hasSearched = false
-    @Published var scope: SearchScope = .all
+    @Published var scope: SearchScope = .auto
+    @Published var detectedScopeLabel: String?   // what "auto" resolved to, for display
     @Published var indexedFiles: [IndexedFile] = []
     @Published var isLoadingFiles = false
     @Published var errorMessage: String?
@@ -65,10 +66,15 @@ final class AppViewModel: ObservableObject {
         hasSearched = true
         defer { isSearching = false }
         do {
-            results = try await helper.search(query: trimmed, scope: scope)
+            let outcome = try await helper.search(query: trimmed, scope: scope)
+            results = outcome.results
+            detectedScopeLabel = (scope == .auto)
+                ? SearchScope.friendlyName(forResolved: outcome.resolvedScope)
+                : nil
         } catch {
             errorMessage = error.localizedDescription
             results = []
+            detectedScopeLabel = nil
         }
     }
 
@@ -269,6 +275,11 @@ private struct StatusBar: View {
             Spacer(minLength: 12)
 
             if viewModel.hasSearched && !viewModel.results.isEmpty {
+                if viewModel.scope == .auto, let detected = viewModel.detectedScopeLabel {
+                    Label("Auto: \(detected)", systemImage: "sparkles")
+                        .foregroundStyle(.secondary)
+                    Text("·").foregroundStyle(.tertiary)
+                }
                 Text("\(viewModel.results.count) result\(viewModel.results.count == 1 ? "" : "s")")
                     .foregroundStyle(.secondary)
                 if !indexStatsText.isEmpty {

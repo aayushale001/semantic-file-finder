@@ -6,10 +6,12 @@ end drives a small Python helper that embeds everything with **Gemini Embedding 
 and stores the vectors in a local **LanceDB** database. Because Gemini Embedding 2
 is natively multimodal, text, images, audio, and video all land in the **same
 vector space**, so a typed query like "sunset over the ocean" can match a photo or
-a video clip. Text and media occupy different regions of that space, so use the
-search **scope** (All / Documents / Images / Audio / Video) to surface a specific
-kind — scoping to *Images* finds photos that a mixed ranking would otherwise bury.
-Everything stays on your machine.
+a video clip. Text and media occupy different regions of that space, so search
+defaults to an **Auto** scope: it reads keyword cues first (and, only for less
+obvious queries, a quick Gemini call) to infer the kind you mean (e.g. "sunset over
+the ocean" → Images), and blends the top matches from every kind when the query is
+ambiguous so media is never buried. You can also pick a kind manually (All /
+Documents / Images / Audio / Video). Everything stays on your machine.
 
 Supported files:
 - **Text & docs**: `.txt` `.md` `.pdf` `.docx`

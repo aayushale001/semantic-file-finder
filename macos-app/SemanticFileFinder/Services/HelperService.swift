@@ -71,7 +71,7 @@ final class HelperService {
         return summary
     }
 
-    func search(query: String, limit: Int = 10, scope: SearchScope = .all) async throws -> [SearchResult] {
+    func search(query: String, limit: Int = 10, scope: SearchScope = .auto) async throws -> SearchOutcome {
         let response = try await run(
             ["search", query, "--limit", String(limit), "--scope", scope.rawValue],
             as: SearchResponse.self
@@ -79,7 +79,10 @@ final class HelperService {
         if response.status != "success" {
             throw HelperError.helperReturnedError(response.message ?? "Search failed")
         }
-        return response.results ?? []
+        return SearchOutcome(
+            results: response.results ?? [],
+            resolvedScope: response.resolvedScope
+        )
     }
 
     func getStatus() async throws -> HelperStatus {
