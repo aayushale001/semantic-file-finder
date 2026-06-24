@@ -37,6 +37,15 @@ def _emit(payload: dict) -> None:
     sys.stdout.flush()
 
 
+def _emit_error(exc: Exception) -> None:
+    """Emit a single JSON error object, tagging Gemini quota / rate-limit (429)
+    failures with `error_code` so the app can show a dedicated message."""
+    payload = {"status": "error", "message": str(exc)}
+    if isinstance(exc, embeddings.QuotaExceededError) or embeddings.is_quota_error(exc):
+        payload["error_code"] = "quota_exceeded"
+    _emit(payload)
+
+
 def _now_iso() -> str:
     return datetime.now(tz=timezone.utc).isoformat()
 
@@ -198,6 +207,8 @@ def run_index(
 
                 try:
                     records = _index_media_file(f, on_segment=_on_segment)
+                except embeddings.QuotaExceededError:
+                    raise  # a spent quota fails every file — abort, don't churn
                 except Exception as exc:  # noqa: BLE001 - one bad file must not kill the job
                     log.exception("Media embedding failed for %s", f.file_path)
                     errors.append(f"media:{f.file_name}: {exc}")
@@ -225,6 +236,8 @@ def run_index(
                     vectors = embeddings.embed_batch(
                         [c.text for c in chunks], task_type=embeddings.TASK_DOCUMENT
                     )
+                except embeddings.QuotaExceededError:
+                    raise  # a spent quota fails every file — abort, don't churn
                 except Exception as exc:  # noqa: BLE001
                     log.exception("Embedding failed for %s", f.file_path)
                     errors.append(f"embed:{f.file_name}: {exc}")
@@ -310,7 +323,7 @@ def index(
             _emit(run_index(folder, force=force))
     except Exception as exc:  # noqa: BLE001
         log.exception("index command failed")
-        _emit({"status": "error", "message": str(exc)})
+        _emit_error(exc)
         raise typer.Exit(code=1)
 
 
@@ -328,7 +341,7 @@ def search(
         _emit(run_search(query, limit=limit, scope=scope))
     except Exception as exc:  # noqa: BLE001
         log.exception("search command failed")
-        _emit({"status": "error", "message": str(exc)})
+        _emit_error(exc)
         raise typer.Exit(code=1)
 
 

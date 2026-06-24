@@ -1,6 +1,20 @@
 import SwiftUI
 import AppKit
 
+private enum ContentSheet: String, Identifiable {
+    case help
+
+    var id: String { rawValue }
+}
+
+/// A user-facing alert with its own title, so a Gemini quota / rate-limit error
+/// reads as a distinct, actionable notice rather than a generic failure.
+struct AppAlert: Identifiable {
+    let id = UUID()
+    let title: String
+    let message: String
+}
+
 /// Owns all UI state and bridges the SwiftUI views to the Python helper.
 @MainActor
 final class AppViewModel: ObservableObject {
@@ -18,9 +32,25 @@ final class AppViewModel: ObservableObject {
     @Published var detectedScopeLabel: String?   // what "auto" resolved to, for display
     @Published var indexedFiles: [IndexedFile] = []
     @Published var isLoadingFiles = false
-    @Published var errorMessage: String?
+    @Published var activeAlert: AppAlert?
 
     private let helper = HelperService()
+
+    /// Turn a thrown error into a user-facing alert, giving the Gemini quota /
+    /// rate-limit case a dedicated title so users know it's an API-limit issue.
+    private func present(_ error: Error) {
+        if let helperError = error as? HelperError, helperError.isQuotaExceeded {
+            activeAlert = AppAlert(
+                title: "Gemini API limit reached",
+                message: helperError.localizedDescription
+            )
+        } else {
+            activeAlert = AppAlert(
+                title: "Something went wrong",
+                message: error.localizedDescription
+            )
+        }
+    }
 
     func loadInitialState() async {
         await refreshStatus()
@@ -55,7 +85,7 @@ final class AppViewModel: ObservableObject {
             await refreshStatus()
             await refreshFiles()
         } catch {
-            errorMessage = error.localizedDescription
+            present(error)
         }
     }
 
@@ -72,7 +102,7 @@ final class AppViewModel: ObservableObject {
                 ? SearchScope.friendlyName(forResolved: outcome.resolvedScope)
                 : nil
         } catch {
-            errorMessage = error.localizedDescription
+            present(error)
             results = []
             detectedScopeLabel = nil
         }
@@ -87,7 +117,7 @@ final class AppViewModel: ObservableObject {
             indexedFiles = []
             await refreshStatus()
         } catch {
-            errorMessage = error.localizedDescription
+            present(error)
         }
     }
 }
@@ -96,6 +126,7 @@ struct ContentView: View {
     @StateObject private var viewModel = AppViewModel()
     @AppStorage("resultViewMode") private var viewMode: ResultViewMode = .list
     @State private var showResetConfirm = false
+    @State private var presentedSheet: ContentSheet?
 
     /// Keep the results screen active after the first submitted search.
     ///
@@ -157,10 +188,20 @@ struct ContentView: View {
         }
         .frame(minWidth: 760, minHeight: 580)
         .task { await viewModel.loadInitialState() }
-        .alert("Something went wrong", isPresented: errorBinding) {
+        .sheet(item: $presentedSheet) { destination in
+            switch destination {
+            case .help:
+                HelpView()
+            }
+        }
+        .alert(
+            viewModel.activeAlert?.title ?? "",
+            isPresented: alertBinding,
+            presenting: viewModel.activeAlert
+        ) { _ in
             Button("OK", role: .cancel) {}
-        } message: {
-            Text(viewModel.errorMessage ?? "")
+        } message: { alert in
+            Text(alert.message)
         }
         .confirmationDialog(
             "Reset the index?",
@@ -179,10 +220,10 @@ struct ContentView: View {
         return URL(fileURLWithPath: folder).lastPathComponent
     }
 
-    private var errorBinding: Binding<Bool> {
+    private var alertBinding: Binding<Bool> {
         Binding(
-            get: { viewModel.errorMessage != nil },
-            set: { if !$0 { viewModel.errorMessage = nil } }
+            get: { viewModel.activeAlert != nil },
+            set: { if !$0 { viewModel.activeAlert = nil } }
         )
     }
 
@@ -220,6 +261,13 @@ struct ContentView: View {
                 .labelsHidden()
                 .help("Show results as a list or icons")
             }
+
+            Button {
+                presentedSheet = .help
+            } label: {
+                Label("Help", systemImage: "questionmark.circle")
+            }
+            .help("Learn how Semantic File Finder works")
 
             Menu {
                 Button {

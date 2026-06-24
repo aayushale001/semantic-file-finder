@@ -26,6 +26,54 @@ TASK_QUERY = "RETRIEVAL_QUERY"
 _client = None
 
 
+class QuotaExceededError(RuntimeError):
+    """Raised when the Gemini API rejects a call for quota/rate-limit reasons.
+
+    Maps to HTTP 429 / RESOURCE_EXHAUSTED. Surfaced distinctly so the app can
+    tell the user they've hit their API limit rather than showing a generic
+    failure, and so indexing aborts immediately instead of hammering a quota
+    that is already spent.
+    """
+
+
+def is_quota_error(exc: Exception) -> bool:
+    """True when `exc` looks like a Gemini quota / rate-limit (HTTP 429) error."""
+    if isinstance(exc, QuotaExceededError):
+        return True
+
+    for source in (exc, getattr(exc, "response", None)):
+        if source is None:
+            continue
+        for attr in ("code", "status_code"):
+            code = getattr(source, attr, None)
+            if code is None:
+                continue
+            try:
+                if int(code) == 429:
+                    return True
+            except (TypeError, ValueError):
+                if str(code).strip() == "429":
+                    return True
+
+    text = str(exc).lower()
+    # Keep these markers specific to actual quota / rate-limit failures. A bare
+    # "quota" substring is too broad and can misclassify unrelated messages.
+    return any(marker in text for marker in (
+        "resource_exhausted",
+        "too many requests",
+        "http 429",
+        "http/1.1 429",
+        "status_code=429",
+        "code=429",
+        "'code': 429",
+        '"code": 429',
+        "quota exceeded",
+        "exceeded your current quota",
+        "rate limit exceeded",
+        "rate-limit exceeded",
+    ))
+
+
 def _get_client():
     """Lazily build the genai client so offline commands work without a key."""
     global _client
@@ -57,6 +105,14 @@ def _with_retries(fn: Callable[[], T], label: str, attempts: int = config.EMBED_
         try:
             return fn()
         except Exception as exc:  # noqa: BLE001 - retry any transient failure
+            # A quota / rate-limit error won't clear in the few seconds we'd
+            # back off for, and retrying just burns more of an exhausted quota.
+            # Fail fast with a typed error so the app can tell the user clearly.
+            if is_quota_error(exc):
+                log.warning("%s hit a Gemini quota / rate limit: %s", label, exc)
+                raise QuotaExceededError(
+                    "Gemini API quota or rate limit exceeded (HTTP 429)."
+                ) from exc
             last_err = exc
             if attempt < attempts - 1:
                 wait = min(2 ** attempt, 30)
@@ -113,7 +169,10 @@ def _wait_until_active(client, file, timeout: int = 120):
             return file
         time.sleep(2)
         waited += 2
-        file = client.files.get(name=file.name)
+        file = _with_retries(
+            lambda: client.files.get(name=file.name),
+            "Media upload status check",
+        )
     return file
 
 
@@ -146,7 +205,10 @@ def embed_media_file(path: str, mime_type: str, task_type: str = TASK_DOCUMENT) 
         return _with_retries(lambda: _embed_part(part), "Media embedding")
 
     # Large segment → upload via the Files API, embed by reference, then clean up.
-    uploaded = client.files.upload(file=path)
+    uploaded = _with_retries(
+        lambda: client.files.upload(file=path),
+        "Media upload",
+    )
     try:
         uploaded = _wait_until_active(client, uploaded)
         part = types.Part.from_uri(file_uri=uploaded.uri, mime_type=mime_type)

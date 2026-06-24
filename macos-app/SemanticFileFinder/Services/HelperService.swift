@@ -6,6 +6,8 @@ enum HelperError: LocalizedError {
     case processFailed(String)
     case decodingFailed(String)
     case helperReturnedError(String)
+    /// The Gemini API rejected a call for quota / rate-limit reasons (HTTP 429).
+    case quotaExceeded(String)
 
     var errorDescription: String? {
         switch self {
@@ -19,7 +21,15 @@ enum HelperError: LocalizedError {
             return "Could not read helper output: \(message)"
         case .helperReturnedError(let message):
             return message
+        case .quotaExceeded:
+            return "You've reached your Gemini API quota or rate limit. Wait a little and try again, or check your usage and billing limits in Google AI Studio."
         }
+    }
+
+    /// True when the failure was a Gemini quota / rate-limit (HTTP 429) error.
+    var isQuotaExceeded: Bool {
+        if case .quotaExceeded = self { return true }
+        return false
     }
 }
 
@@ -110,8 +120,35 @@ final class HelperService {
 
     // MARK: - Process plumbing
 
+    /// A helper error response: `{"status":"error","message":...,"error_code":...}`.
+    /// Every command emits this shape on failure, so it's decoded centrally.
+    private struct ErrorEnvelope: Decodable {
+        let status: String?
+        let message: String?
+        let errorCode: String?
+
+        enum CodingKeys: String, CodingKey {
+            case status, message
+            case errorCode = "error_code"
+        }
+    }
+
+    /// Map a helper error payload to a typed `HelperError`, distinguishing the
+    /// Gemini quota / rate-limit case so the app can show a dedicated message.
+    static func mapError(message: String?, errorCode: String?) -> HelperError {
+        if errorCode == "quota_exceeded" {
+            return .quotaExceeded(message ?? "Gemini API limit reached")
+        }
+        return .helperReturnedError(message ?? "The helper reported an error.")
+    }
+
     private func run<T: Decodable>(_ args: [String], as type: T.Type) async throws -> T {
         let data = try await runRaw(args)
+        // Any command can fail with a JSON error envelope; surface it as a typed
+        // error (incl. quota_exceeded) before attempting to decode the success type.
+        if let env = try? JSONDecoder().decode(ErrorEnvelope.self, from: data), env.status == "error" {
+            throw Self.mapError(message: env.message, errorCode: env.errorCode)
+        }
         do {
             return try JSONDecoder().decode(T.self, from: data)
         } catch {
@@ -153,7 +190,7 @@ final class HelperService {
         async let stderrData = readToEnd(errPipe.fileHandleForReading)
 
         var summary: IndexSummary?
-        var reportedError: String?
+        var reportedError: HelperError?
         let decoder = JSONDecoder()
 
         do {
@@ -165,7 +202,7 @@ final class HelperService {
                 else { continue }
 
                 if parsed.isError {
-                    reportedError = parsed.message ?? "Indexing failed"
+                    reportedError = Self.mapError(message: parsed.message, errorCode: parsed.errorCode)
                 } else if parsed.isComplete {
                     summary = parsed.asSummary()
                 } else {
@@ -180,7 +217,7 @@ final class HelperService {
         process.waitUntilExit()
 
         if let reportedError {
-            throw HelperError.helperReturnedError(reportedError)
+            throw reportedError
         }
         if let summary {
             return summary

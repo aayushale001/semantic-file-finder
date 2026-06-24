@@ -31,11 +31,13 @@ struct SearchResponse: Codable {
     let detectedScope: String?    // what `auto` classified the query as (nil otherwise)
     let results: [SearchResult]?
     let message: String?
+    let errorCode: String?        // e.g. "quota_exceeded" when the API limit is hit
 
     enum CodingKeys: String, CodingKey {
         case status, query, scope, results, message
         case resolvedScope = "resolved_scope"
         case detectedScope = "detected_scope"
+        case errorCode = "error_code"
     }
 }
 
@@ -53,6 +55,7 @@ struct IndexSummary: Codable {
     let indexedChunks: Int?
     let errors: [String]?
     let message: String?
+    let errorCode: String?        // e.g. "quota_exceeded" when the API limit is hit
 
     enum CodingKeys: String, CodingKey {
         case status
@@ -61,6 +64,7 @@ struct IndexSummary: Codable {
         case indexedChunks = "indexed_chunks"
         case errors
         case message
+        case errorCode = "error_code"
     }
 }
 
@@ -149,6 +153,7 @@ struct IndexStreamLine: Decodable {
     let skippedFiles: Int?
     let indexedChunks: Int?
     let errors: [String]?
+    let errorCode: String?        // e.g. "quota_exceeded" when the API limit is hit
 
     enum CodingKeys: String, CodingKey {
         case event, status, message, current, total, errors
@@ -158,6 +163,7 @@ struct IndexStreamLine: Decodable {
         case indexedFiles = "indexed_files"
         case skippedFiles = "skipped_files"
         case indexedChunks = "indexed_chunks"
+        case errorCode = "error_code"
     }
 
     /// The terminal summary line (`complete`), or a single-object summary if the
@@ -185,7 +191,8 @@ struct IndexStreamLine: Decodable {
             skippedFiles: skippedFiles,
             indexedChunks: indexedChunks,
             errors: errors,
-            message: message
+            message: message,
+            errorCode: errorCode
         )
     }
 }

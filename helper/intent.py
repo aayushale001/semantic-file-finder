@@ -105,5 +105,9 @@ def classify_scope(query: str) -> str:
     try:
         return _llm_scope(query)
     except Exception as exc:  # noqa: BLE001 - never let detection break search
+        if embeddings.is_quota_error(exc):
+            raise embeddings.QuotaExceededError(
+                "Gemini API quota or rate limit exceeded (HTTP 429)."
+            ) from exc
         log.warning("intent classification failed (%s); falling back to blend", exc)
         return "any"
