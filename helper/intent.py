@@ -109,5 +109,9 @@ def classify_scope(query: str) -> str:
             raise embeddings.QuotaExceededError(
                 "Gemini API quota or rate limit exceeded (HTTP 429)."
             ) from exc
+        if embeddings.is_network_error(exc):
+            raise embeddings.NetworkUnavailableError(
+                "Cannot reach Gemini. Check your internet connection and try again."
+            ) from exc
         log.warning("intent classification failed (%s); falling back to blend", exc)
         return "any"

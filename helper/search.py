@@ -79,5 +79,46 @@ def run_search(query: str, limit: int = 10, scope: str = "auto") -> dict:
         "scope": scope,
         "resolved_scope": resolved,
         "detected_scope": detected,
+        "search_mode": "semantic",
+        "fallback_reason": None,
+        "message": None,
+        "is_fallback": False,
+        "results": [r.model_dump() for r in results],
+    }
+
+
+def run_local_search(
+    query: str,
+    limit: int = 10,
+    scope: str = "auto",
+    reason: str = "offline",
+) -> dict:
+    """Search local indexed metadata/text without calling Gemini."""
+    query = query.strip()
+    if not query:
+        return {"status": "error", "message": "Empty query"}
+
+    scope = (scope or "auto").lower()
+    resolved = "all" if scope == "auto" else scope
+    if resolved not in ("all", "any") and resolved not in SCOPE_MODALITIES:
+        return {"status": "error", "message": f"Unknown scope '{resolved}'"}
+
+    modalities = None if resolved in ("all", "any") else SCOPE_MODALITIES[resolved]
+    results = vector_store.local_search(query, limit=limit, modalities=modalities)
+    message = (
+        "Showing local filename/text matches. Semantic search and indexing need "
+        "an internet connection for Gemini embeddings."
+    )
+
+    return {
+        "status": "success",
+        "query": query,
+        "scope": scope,
+        "resolved_scope": resolved,
+        "detected_scope": None,
+        "search_mode": "local",
+        "fallback_reason": reason,
+        "message": message,
+        "is_fallback": True,
         "results": [r.model_dump() for r in results],
     }

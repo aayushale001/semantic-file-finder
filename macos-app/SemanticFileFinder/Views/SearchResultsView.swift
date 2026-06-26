@@ -8,6 +8,7 @@ struct SearchResultsView: View {
     let results: [SearchResult]
     let hasSearched: Bool
     let isSearching: Bool
+    let searchNotice: String?
     let viewMode: ResultViewMode
 
     var body: some View {
@@ -30,8 +31,20 @@ struct SearchResultsView: View {
                     .background(.regularMaterial, in: .rect(cornerRadius: 12))
             }
         }
+        .overlay(alignment: .top) {
+            if let searchNotice {
+                Label(searchNotice, systemImage: "wifi.slash")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 7)
+                    .background(.regularMaterial, in: Capsule())
+                    .padding(.top, 12)
+            }
+        }
         .animation(.smooth(duration: 0.2), value: viewMode)
         .animation(.smooth(duration: 0.2), value: results)
+        .animation(.smooth(duration: 0.2), value: searchNotice)
     }
 
     // MARK: Empty states
@@ -40,9 +53,13 @@ struct SearchResultsView: View {
     private var emptyState: some View {
         if hasSearched {
             ContentUnavailableView(
-                "No matches",
+                searchNotice == nil ? "No matches" : "No local matches",
                 systemImage: "magnifyingglass",
-                description: Text("Try a different query, or index more folders.")
+                description: Text(
+                    searchNotice == nil
+                        ? "Try a different query, or index more folders."
+                        : "Semantic search needs internet. Try a filename, extension, or words from an indexed document."
+                )
             )
         } else {
             ContentUnavailableView(

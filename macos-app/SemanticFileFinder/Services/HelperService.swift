@@ -8,6 +8,8 @@ enum HelperError: LocalizedError {
     case helperReturnedError(String)
     /// The Gemini API rejected a call for quota / rate-limit reasons (HTTP 429).
     case quotaExceeded(String)
+    /// Gemini could not be reached because the device appears offline.
+    case networkUnavailable(String)
 
     var errorDescription: String? {
         switch self {
@@ -23,12 +25,20 @@ enum HelperError: LocalizedError {
             return message
         case .quotaExceeded:
             return "You've reached your Gemini API quota or rate limit. Wait a little and try again, or check your usage and billing limits in Google AI Studio."
+        case .networkUnavailable:
+            return "You're offline, or Gemini can't be reached. Semantic search and indexing need internet, but local filename/text search can still work."
         }
     }
 
     /// True when the failure was a Gemini quota / rate-limit (HTTP 429) error.
     var isQuotaExceeded: Bool {
         if case .quotaExceeded = self { return true }
+        return false
+    }
+
+    /// True when Gemini was unreachable because the network appears unavailable.
+    var isNetworkUnavailable: Bool {
+        if case .networkUnavailable = self { return true }
         return false
     }
 }
@@ -91,7 +101,29 @@ final class HelperService {
         }
         return SearchOutcome(
             results: response.results ?? [],
-            resolvedScope: response.resolvedScope
+            resolvedScope: response.resolvedScope,
+            searchMode: response.searchMode,
+            fallbackReason: response.fallbackReason,
+            message: response.message,
+            isFallback: response.isFallback ?? false
+        )
+    }
+
+    func localSearch(query: String, limit: Int = 50, scope: SearchScope = .auto) async throws -> SearchOutcome {
+        let response = try await run(
+            ["local-search", query, "--limit", String(limit), "--scope", scope.rawValue],
+            as: SearchResponse.self
+        )
+        if response.status != "success" {
+            throw HelperError.helperReturnedError(response.message ?? "Local search failed")
+        }
+        return SearchOutcome(
+            results: response.results ?? [],
+            resolvedScope: response.resolvedScope,
+            searchMode: response.searchMode,
+            fallbackReason: response.fallbackReason,
+            message: response.message,
+            isFallback: response.isFallback ?? false
         )
     }
 
@@ -138,6 +170,9 @@ final class HelperService {
     static func mapError(message: String?, errorCode: String?) -> HelperError {
         if errorCode == "quota_exceeded" {
             return .quotaExceeded(message ?? "Gemini API limit reached")
+        }
+        if errorCode == "network_unavailable" {
+            return .networkUnavailable(message ?? "Gemini is unreachable")
         }
         return .helperReturnedError(message ?? "The helper reported an error.")
     }

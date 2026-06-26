@@ -24,7 +24,7 @@ import vector_store
 from chunker import chunk_document
 from extractors import extract_file
 from models import ChunkRecord, ScannedFile
-from search import run_search
+from search import run_local_search, run_search
 
 app = typer.Typer(add_completion=False, help="Semantic File Finder helper CLI")
 log = logging.getLogger("helper")
@@ -43,6 +43,8 @@ def _emit_error(exc: Exception) -> None:
     payload = {"status": "error", "message": str(exc)}
     if isinstance(exc, embeddings.QuotaExceededError) or embeddings.is_quota_error(exc):
         payload["error_code"] = "quota_exceeded"
+    elif isinstance(exc, embeddings.NetworkUnavailableError) or embeddings.is_network_error(exc):
+        payload["error_code"] = "network_unavailable"
     _emit(payload)
 
 
@@ -341,6 +343,24 @@ def search(
         _emit(run_search(query, limit=limit, scope=scope))
     except Exception as exc:  # noqa: BLE001
         log.exception("search command failed")
+        _emit_error(exc)
+        raise typer.Exit(code=1)
+
+
+@app.command(name="local-search")
+def local_search(
+    query: str = typer.Argument(..., help="Filename/text query"),
+    limit: int = typer.Option(10, "--limit", help="Max results"),
+    scope: str = typer.Option(
+        "auto", "--scope",
+        help="auto | all | documents | images | audio | video",
+    ),
+) -> None:
+    """Search local indexed filenames/paths/text without calling Gemini."""
+    try:
+        _emit(run_local_search(query, limit=limit, scope=scope))
+    except Exception as exc:  # noqa: BLE001
+        log.exception("local-search command failed")
         _emit_error(exc)
         raise typer.Exit(code=1)
 

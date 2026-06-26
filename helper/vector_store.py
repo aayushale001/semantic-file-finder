@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from datetime import datetime, timezone
 from typing import List, Optional
 
@@ -174,6 +175,88 @@ def search_chunks(
             page_number=r.get("page_number"),
             chunk_index=r["chunk_index"],
             score=score,
+        ))
+    return results
+
+
+def _term_positions(text: str, terms: List[str]) -> int:
+    haystack = (text or "").lower()
+    return sum(1 for term in terms if term in haystack)
+
+
+def local_search(
+    query: str,
+    limit: int = 10,
+    modalities: Optional[set] = None,
+) -> List[SearchResult]:
+    """Search the local index without Gemini.
+
+    This is the offline / fallback path: it ranks indexed files by filename,
+    path, and stored extracted text/preview. It returns at most one best chunk per
+    file so the UI behaves like a normal file-manager search instead of a chunk
+    search.
+    """
+    tbl = get_table()
+    if tbl is None:
+        return []
+
+    terms = [t for t in re.findall(r"[a-z0-9]+", (query or "").lower()) if t]
+    if not terms:
+        return []
+
+    cols = [
+        "file_path", "file_name", "file_extension", "modality",
+        "content_preview", "full_text", "page_number", "chunk_index",
+    ]
+    best_by_file: dict = {}
+    for r in _rows(tbl, cols):
+        if modalities and r.get("modality") not in modalities:
+            continue
+
+        file_name = r.get("file_name") or ""
+        file_path = r.get("file_path") or ""
+        preview = r.get("content_preview") or ""
+        full_text = r.get("full_text") or ""
+
+        name_hits = _term_positions(file_name, terms)
+        path_hits = _term_positions(file_path, terms)
+        preview_hits = _term_positions(preview, terms)
+        text_hits = _term_positions(full_text, terms)
+        if not (name_hits or path_hits or preview_hits or text_hits):
+            continue
+
+        # Prefer filename/path hits like Finder would, then fall back to indexed
+        # content. Add an all-terms bonus so precise queries rise naturally.
+        searchable = " ".join([file_name, file_path, preview, full_text]).lower()
+        all_terms_bonus = 20 if all(term in searchable for term in terms) else 0
+        score = (
+            name_hits * 100
+            + path_hits * 30
+            + preview_hits * 12
+            + text_hits * 4
+            + all_terms_bonus
+        )
+
+        path = file_path
+        existing = best_by_file.get(path)
+        if existing is not None and score <= existing[0]:
+            continue
+        best_by_file[path] = (score, r)
+
+    ranked = sorted(
+        best_by_file.values(),
+        key=lambda item: (-item[0], (item[1].get("file_name") or "").lower()),
+    )
+    results: List[SearchResult] = []
+    for score, r in ranked[:max(1, limit)]:
+        results.append(SearchResult(
+            file_name=r["file_name"],
+            file_path=r["file_path"],
+            file_extension=r["file_extension"],
+            content_preview=r.get("content_preview") or f"Local match — {r['file_name']}",
+            page_number=r.get("page_number"),
+            chunk_index=r.get("chunk_index") or 0,
+            score=None,
         ))
     return results
 

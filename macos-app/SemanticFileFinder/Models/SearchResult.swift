@@ -29,6 +29,9 @@ struct SearchResponse: Codable {
     let scope: String?
     let resolvedScope: String?    // the kind actually searched (auto may resolve to one)
     let detectedScope: String?    // what `auto` classified the query as (nil otherwise)
+    let searchMode: String?       // "semantic" or "local"
+    let fallbackReason: String?   // e.g. "offline"
+    let isFallback: Bool?
     let results: [SearchResult]?
     let message: String?
     let errorCode: String?        // e.g. "quota_exceeded" when the API limit is hit
@@ -37,6 +40,9 @@ struct SearchResponse: Codable {
         case status, query, scope, results, message
         case resolvedScope = "resolved_scope"
         case detectedScope = "detected_scope"
+        case searchMode = "search_mode"
+        case fallbackReason = "fallback_reason"
+        case isFallback = "is_fallback"
         case errorCode = "error_code"
     }
 }
@@ -45,6 +51,10 @@ struct SearchResponse: Codable {
 struct SearchOutcome {
     let results: [SearchResult]
     let resolvedScope: String?
+    let searchMode: String?
+    let fallbackReason: String?
+    let message: String?
+    let isFallback: Bool
 }
 
 /// Response from the `index` command.

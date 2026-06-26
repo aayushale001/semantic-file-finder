@@ -103,6 +103,11 @@ struct HelpView: View {
                     title: "Scopes improve relevance",
                     detail: "Auto chooses a likely file kind, while Documents, Images, Audio, and Video let you narrow the search yourself."
                 )
+                HelpFact(
+                    systemImage: "wifi.slash",
+                    title: "Offline falls back to local search",
+                    detail: "If Gemini cannot be reached, searches use local filename, path, and indexed text matches. Indexing and semantic search resume when internet is back."
+                )
             }
         }
     }

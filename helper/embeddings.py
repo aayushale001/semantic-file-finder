@@ -36,6 +36,10 @@ class QuotaExceededError(RuntimeError):
     """
 
 
+class NetworkUnavailableError(RuntimeError):
+    """Raised when Gemini cannot be reached due to an offline/network failure."""
+
+
 def is_quota_error(exc: Exception) -> bool:
     """True when `exc` looks like a Gemini quota / rate-limit (HTTP 429) error."""
     if isinstance(exc, QuotaExceededError):
@@ -72,6 +76,37 @@ def is_quota_error(exc: Exception) -> bool:
         "rate limit exceeded",
         "rate-limit exceeded",
     ))
+
+
+def is_network_error(exc: Exception) -> bool:
+    """True when `exc` looks like an offline / network-unreachable failure."""
+    if isinstance(exc, NetworkUnavailableError):
+        return True
+
+    text = f"{type(exc).__name__} {exc}".lower()
+    network_markers = (
+        "connecterror",
+        "connectionerror",
+        "connection error",
+        "connection refused",
+        "connection reset",
+        "connection aborted",
+        "connection timed out",
+        "network is unreachable",
+        "network unreachable",
+        "no internet",
+        "offline",
+        "temporary failure in name resolution",
+        "name resolution",
+        "nodename nor servname",
+        "name or service not known",
+        "gaierror",
+        "failed to establish a new connection",
+        "max retries exceeded",
+        "could not resolve",
+        "dns",
+    )
+    return any(marker in text for marker in network_markers)
 
 
 def _get_client():
@@ -112,6 +147,14 @@ def _with_retries(fn: Callable[[], T], label: str, attempts: int = config.EMBED_
                 log.warning("%s hit a Gemini quota / rate limit: %s", label, exc)
                 raise QuotaExceededError(
                     "Gemini API quota or rate limit exceeded (HTTP 429)."
+                ) from exc
+            # Offline / DNS / unreachable errors also should not make the app
+            # look frozen for minutes. Surface them so the app can fall back to
+            # local filename/text search.
+            if is_network_error(exc):
+                log.warning("%s could not reach Gemini: %s", label, exc)
+                raise NetworkUnavailableError(
+                    "Cannot reach Gemini. Check your internet connection and try again."
                 ) from exc
             last_err = exc
             if attempt < attempts - 1:

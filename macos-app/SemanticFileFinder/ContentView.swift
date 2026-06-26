@@ -32,6 +32,7 @@ final class AppViewModel: ObservableObject {
     @Published var detectedScopeLabel: String?   // what "auto" resolved to, for display
     @Published var indexedFiles: [IndexedFile] = []
     @Published var isLoadingFiles = false
+    @Published var searchNotice: String?
     @Published var activeAlert: AppAlert?
 
     private let helper = HelperService()
@@ -42,6 +43,11 @@ final class AppViewModel: ObservableObject {
         if let helperError = error as? HelperError, helperError.isQuotaExceeded {
             activeAlert = AppAlert(
                 title: "Gemini API limit reached",
+                message: helperError.localizedDescription
+            )
+        } else if let helperError = error as? HelperError, helperError.isNetworkUnavailable {
+            activeAlert = AppAlert(
+                title: "Gemini is unreachable",
                 message: helperError.localizedDescription
             )
         } else {
@@ -101,10 +107,30 @@ final class AppViewModel: ObservableObject {
             detectedScopeLabel = (scope == .auto)
                 ? SearchScope.friendlyName(forResolved: outcome.resolvedScope)
                 : nil
+            searchNotice = nil
+        } catch {
+            if let helperError = error as? HelperError, helperError.isNetworkUnavailable {
+                await runLocalSearchFallback(query: trimmed)
+                return
+            }
+            present(error)
+            results = []
+            detectedScopeLabel = nil
+            searchNotice = nil
+        }
+    }
+
+    private func runLocalSearchFallback(query: String) async {
+        do {
+            let outcome = try await helper.localSearch(query: query, scope: scope)
+            results = outcome.results
+            detectedScopeLabel = nil
+            searchNotice = outcome.message ?? "Offline: showing local filename/text matches"
         } catch {
             present(error)
             results = []
             detectedScopeLabel = nil
+            searchNotice = nil
         }
     }
 
@@ -115,6 +141,7 @@ final class AppViewModel: ObservableObject {
             results = []
             hasSearched = false
             indexedFiles = []
+            searchNotice = nil
             await refreshStatus()
         } catch {
             present(error)
@@ -145,6 +172,7 @@ struct ContentView: View {
                         results: viewModel.results,
                         hasSearched: viewModel.hasSearched,
                         isSearching: viewModel.isSearching,
+                        searchNotice: viewModel.searchNotice,
                         viewMode: viewMode
                     )
                 } else {
@@ -323,7 +351,11 @@ private struct StatusBar: View {
             Spacer(minLength: 12)
 
             if viewModel.hasSearched && !viewModel.results.isEmpty {
-                if viewModel.scope == .auto, let detected = viewModel.detectedScopeLabel {
+                if let notice = viewModel.searchNotice {
+                    Label(notice, systemImage: "wifi.slash")
+                        .foregroundStyle(.secondary)
+                    Text("·").foregroundStyle(.tertiary)
+                } else if viewModel.scope == .auto, let detected = viewModel.detectedScopeLabel {
                     Label("Auto: \(detected)", systemImage: "sparkles")
                         .foregroundStyle(.secondary)
                     Text("·").foregroundStyle(.tertiary)

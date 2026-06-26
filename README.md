@@ -11,7 +11,10 @@ defaults to an **Auto** scope: it reads keyword cues first (and, only for less
 obvious queries, a quick Gemini call) to infer the kind you mean (e.g. "sunset over
 the ocean" → Images), and blends the top matches from every kind when the query is
 ambiguous so media is never buried. You can also pick a kind manually (All /
-Documents / Images / Audio / Video). Everything stays on your machine.
+Documents / Images / Audio / Video). The index is stored locally; embedding calls
+for indexing and semantic search go directly to the Gemini API using your key.
+When Gemini is unreachable, the app falls back to local filename/path/text search
+over files that have already been indexed.
 
 Supported files:
 - **Text & docs**: `.txt` `.md` `.pdf` `.docx`
@@ -36,8 +39,9 @@ SwiftUI macOS App  ──runs──▶  Python helper CLI (JSON over stdout)
 SwiftUI results  ◀──────────────  JSON  ◀─────────────────────┘
 ```
 
-Gemini only creates embeddings. LanceDB stores and searches them. SwiftUI only
-handles UI and calls the helper.
+Gemini creates embeddings and, for unclear Auto-scope queries, helps classify
+intent. LanceDB stores and searches the local index. SwiftUI handles UI and calls
+the helper.
 
 ## Project structure
 
@@ -52,9 +56,9 @@ handles UI and calls the helper.
 │       ├── ContentView.swift
 │       ├── Models/SearchResult.swift
 │       ├── Services/HelperService.swift
-│       └── Views/{FolderPickerView,IndexingView,SearchResultsView}.swift
+│       └── Views/{FolderPickerView,HelpView,IndexedFilesView,IndexingView,LiquidGlass,SearchBar,SearchResultsView}.swift
 ├── helper/
-│   ├── main.py                      # Typer CLI: index / search / status / reset / model-info
+│   ├── main.py                      # Typer CLI: index / search / local-search / list / status / reset / model-info
 │   ├── config.py  scanner.py  chunker.py  embeddings.py
 │   ├── vector_store.py  search.py  models.py
 │   ├── extractors/{text,code,pdf,docx}_extractor.py
@@ -85,7 +89,7 @@ The API key is read from the environment / `.env` only — it is never hardcoded
 ## Embedding model
 
 The default is the multimodal-ready **`gemini-embedding-2`** (768 dimensions),
-chosen because the app is meant to grow into images/audio/video later.
+used for text, code, documents, images, audio, and video.
 
 - `gemini-embedding-v1` is rejected.
 - `gemini-embedding-001` is allowed **only** as an explicit text-only fallback:
@@ -115,6 +119,7 @@ python helper/main.py index "/path/to/folder"     # add --force to re-index unch
 python helper/main.py index "/path/to/folder" --progress   # stream NDJSON progress (used by the app)
 python helper/main.py search "transformer attention" --limit 10
 python helper/main.py search "people smiling" --scope images   # restrict to a kind: documents|images|audio|video
+python helper/main.py local-search "invoice pdf" --scope documents  # offline filename/text search
 python helper/main.py list                          # distinct files in the index (powers the gallery)
 python helper/main.py status
 python helper/main.py reset
@@ -162,12 +167,16 @@ open SemanticFileFinder.xcodeproj   # then Run (⌘R)
 The app finds the helper at `helper/` next to this repo and automatically prefers
 the project `.venv`. To point it elsewhere, set the `SEMANTIC_HELPER_DIR`
 environment variable or the `helperDirectory` UserDefaults key. The app sandbox is
-intentionally **off** for this MVP so it can run the helper and read the folder
-you pick — re-enable it before any distribution.
+intentionally **off** in this development build so it can run the helper and read
+the folder you pick — re-enable it before any distribution.
 
 Use it: **Choose Folder → Index** (a live progress bar shows files done /
 remaining) **→ type a query → Return → Open**. Switch results between **list**
 and **icon** views with the segmented control in the toolbar.
+
+If you are offline, already-indexed files still appear and searches fall back to
+local filename/path/text matching. Semantic search and indexing new content need
+internet access because Gemini creates embeddings for your files and queries.
 
 ## Local storage
 
@@ -188,13 +197,24 @@ and **icon** views with the segmented control in the toolbar.
   `TEXT_ONLY_MODE=true`), then `reset` and re-index.
 - **"Index was built with a different model…"** — run `python helper/main.py reset`
   then `python helper/main.py index "/path" --force`.
+- **No internet / Gemini unreachable** — already-indexed files remain browseable,
+  and search falls back to local filename/path/text matching. Indexing and
+  semantic search resume when internet access is back.
 - **App can't find the helper** — set `SEMANTIC_HELPER_DIR` to the absolute path of
   the `helper/` directory.
 
-## Not in this MVP (architecture kept flexible for later)
+## Current limitations / roadmap
 
-Images/OCR, audio/video, smart folders, auto-tagging, hybrid keyword+vector
-search, background indexing, file-system watching, and app notarization.
+The app already supports text, code, PDFs, DOCX, images, audio, video, scoped
+semantic search, Auto scope detection, indexed-file browsing, and offline local
+filename/text fallback. Still planned:
+
+- OCR for text inside images and scanned PDFs.
+- Background indexing and file-system watching.
+- Smart folders, saved searches, and auto-tagging.
+- Optional hybrid keyword + semantic scoring for online search.
+- A distributable, sandboxed, signed/notarized macOS app bundle.
+- Keychain-backed API key setup for packaged releases.
 
 ## License
 

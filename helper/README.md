@@ -2,7 +2,8 @@
 
 Python helper for the Semantic File Finder. It scans a folder, extracts and chunks
 text, embeds chunks with Gemini Embedding 2, stores them in LanceDB, and answers
-natural-language searches.
+natural-language searches. It also provides a local filename/path/text search
+fallback that does not call Gemini.
 
 ## Contract with the app
 
@@ -16,6 +17,7 @@ natural-language searches.
 ```bash
 python main.py index "/path/to/folder" [--force] [--progress] [--json]
 python main.py search "natural language query" [--limit 10] [--scope auto|all|documents|images|audio|video]
+python main.py local-search "filename or text" [--limit 10] [--scope auto|all|documents|images|audio|video]
 python main.py list
 python main.py status
 python main.py reset
@@ -26,6 +28,7 @@ python main.py model-info
 |---|---|
 | `index` | `{indexed_files, skipped_files, indexed_chunks, errors[]}` |
 | `search` | `{query, scope, results[]}` (sorted by similarity; `--scope` limits to a kind) |
+| `local-search` | `{query, scope, results[]}` (offline filename/path/text matches; no Gemini call) |
 | `list` | `{files[]}` — distinct indexed files (`file_path, file_name, file_extension, modality, chunk_count, …`) |
 | `status` | `{total_chunks, total_files, db_path}` |
 | `reset` | `{message}` (drops the table + index metadata) |
@@ -107,5 +110,5 @@ python -c "import sys; sys.path.insert(0,'.'); import scanner; \
 print(len(scanner.scan_folder('../test_files')), 'files')"
 ```
 
-`status`, `reset`, and `model-info` also work without a key. `index` and `search`
-require `GEMINI_API_KEY`.
+`status`, `reset`, `model-info`, `list`, and `local-search` also work without a
+key. `index` and semantic `search` require `GEMINI_API_KEY` and internet access.
