@@ -63,13 +63,13 @@ struct HelpView: View {
             VStack(spacing: 18) {
                 HelpStep(
                     number: 1,
-                    title: "Choose a folder",
-                    detail: "Select the folder containing the documents and media you want to search."
+                    title: "Add one or more folders",
+                    detail: "Select the folders containing the documents and media you want to search."
                 )
                 HelpStep(
                     number: 2,
-                    title: "Index its files",
-                    detail: "The app reads supported files, splits long content into manageable pieces, and creates an embedding for each piece."
+                    title: "Index their files",
+                    detail: "The app reads supported files, splits long content into manageable pieces, and creates an embedding for each piece. Watched folders auto-sync when files change."
                 )
                 HelpStep(
                     number: 3,
@@ -102,6 +102,11 @@ struct HelpView: View {
                     systemImage: "scope",
                     title: "Scopes improve relevance",
                     detail: "Auto chooses a likely file kind, while Documents, Images, Audio, and Video let you narrow the search yourself."
+                )
+                HelpFact(
+                    systemImage: "folder.badge.gearshape",
+                    title: "Watched folders stay in sync",
+                    detail: "You can add multiple folders. When files are added, changed, moved, or deleted, the app queues a background re-index and prunes stale results."
                 )
                 HelpFact(
                     systemImage: "wifi.slash",

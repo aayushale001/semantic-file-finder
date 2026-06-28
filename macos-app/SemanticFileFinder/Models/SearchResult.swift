@@ -63,6 +63,7 @@ struct IndexSummary: Codable {
     let indexedFiles: Int?
     let skippedFiles: Int?
     let indexedChunks: Int?
+    let prunedFiles: Int?         // files removed because they vanished from disk
     let errors: [String]?
     let message: String?
     let errorCode: String?        // e.g. "quota_exceeded" when the API limit is hit
@@ -72,9 +73,23 @@ struct IndexSummary: Codable {
         case indexedFiles = "indexed_files"
         case skippedFiles = "skipped_files"
         case indexedChunks = "indexed_chunks"
+        case prunedFiles = "pruned_files"
         case errors
         case message
         case errorCode = "error_code"
+    }
+}
+
+/// Response from the `remove` command (dropping a watched folder from the index).
+struct RemoveResponse: Codable {
+    let status: String
+    let removedFiles: Int?
+    let message: String?
+
+    enum CodingKeys: String, CodingKey {
+        case status
+        case removedFiles = "removed_files"
+        case message
     }
 }
 
@@ -162,6 +177,7 @@ struct IndexStreamLine: Decodable {
     let indexedFiles: Int?
     let skippedFiles: Int?
     let indexedChunks: Int?
+    let prunedFiles: Int?
     let errors: [String]?
     let errorCode: String?        // e.g. "quota_exceeded" when the API limit is hit
 
@@ -173,6 +189,7 @@ struct IndexStreamLine: Decodable {
         case indexedFiles = "indexed_files"
         case skippedFiles = "skipped_files"
         case indexedChunks = "indexed_chunks"
+        case prunedFiles = "pruned_files"
         case errorCode = "error_code"
     }
 
@@ -200,6 +217,7 @@ struct IndexStreamLine: Decodable {
             indexedFiles: indexedFiles,
             skippedFiles: skippedFiles,
             indexedChunks: indexedChunks,
+            prunedFiles: prunedFiles,
             errors: errors,
             message: message,
             errorCode: errorCode

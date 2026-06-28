@@ -10,8 +10,8 @@ func chooseFolderPath() -> String? {
     panel.canChooseFiles = false
     panel.canChooseDirectories = true
     panel.allowsMultipleSelection = false
-    panel.prompt = "Choose"
-    panel.message = "Choose a folder to index"
+    panel.prompt = "Add Folder"
+    panel.message = "Choose a folder to watch and index"
     guard panel.runModal() == .OK, let url = panel.url else { return nil }
     return url.path
 }

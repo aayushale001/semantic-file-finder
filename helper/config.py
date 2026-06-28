@@ -36,10 +36,10 @@ TABLE_NAME = "chunks"
 
 # --- Gemini embeddings -------------------------------------------------------
 EMBEDDING_PROVIDER = "gemini"
-# The default is the multimodal-ready model. This app is intended to grow into
-# images/audio/video, so gemini-embedding-2 is the intended default. The older
-# gemini-embedding-001 is allowed ONLY as an explicit text-only fallback, and
-# gemini-embedding-v1 is rejected outright (see resolve_embedding_model()).
+# The default is the multimodal-ready model used for text, documents, images,
+# audio, and video. The older gemini-embedding-001 is allowed ONLY as an explicit
+# text-only fallback, and gemini-embedding-v1 is rejected outright (see
+# resolve_embedding_model()).
 DEFAULT_EMBEDDING_MODEL = "gemini-embedding-2"
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()

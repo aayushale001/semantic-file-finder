@@ -137,12 +137,16 @@ def run_index(
     folder: str,
     force: bool = False,
     progress: Optional[Callable[[dict], None]] = None,
+    prune: bool = False,
 ) -> dict:
     """Index every supported file under `folder`. Returns a JSON-able summary.
 
     When `progress` is given it is called once per file with a small dict
     describing how far the job has gotten (current/total + running counters),
     which the caller can stream to the UI.
+
+    When `prune` is set, indexed files under `folder` that no longer exist on
+    disk are removed afterward (keeps the index in sync with the file watcher).
     """
     config.ensure_dirs()
     model = config.resolve_embedding_model()           # validate configured model
@@ -209,8 +213,8 @@ def run_index(
 
                 try:
                     records = _index_media_file(f, on_segment=_on_segment)
-                except embeddings.QuotaExceededError:
-                    raise  # a spent quota fails every file — abort, don't churn
+                except (embeddings.QuotaExceededError, embeddings.NetworkUnavailableError):
+                    raise  # API-wide failures affect every file — abort, don't churn
                 except Exception as exc:  # noqa: BLE001 - one bad file must not kill the job
                     log.exception("Media embedding failed for %s", f.file_path)
                     errors.append(f"media:{f.file_name}: {exc}")
@@ -238,8 +242,8 @@ def run_index(
                     vectors = embeddings.embed_batch(
                         [c.text for c in chunks], task_type=embeddings.TASK_DOCUMENT
                     )
-                except embeddings.QuotaExceededError:
-                    raise  # a spent quota fails every file — abort, don't churn
+                except (embeddings.QuotaExceededError, embeddings.NetworkUnavailableError):
+                    raise  # API-wide failures affect every file — abort, don't churn
                 except Exception as exc:  # noqa: BLE001
                     log.exception("Embedding failed for %s", f.file_path)
                     errors.append(f"embed:{f.file_name}: {exc}")
@@ -285,11 +289,19 @@ def run_index(
                     "indexed_chunks": indexed_chunks,
                 })
 
+    pruned_files = 0
+    if prune:
+        try:
+            pruned_files = len(vector_store.prune_missing(folder))
+        except Exception as exc:  # noqa: BLE001 - pruning is best-effort
+            log.warning("Pruning missing files under %s failed: %s", folder, exc)
+
     return {
         "status": "success",
         "indexed_files": indexed_files,
         "skipped_files": skipped_files,
         "indexed_chunks": indexed_chunks,
+        "pruned_files": pruned_files,
         "errors": errors,
     }
 
@@ -308,6 +320,11 @@ def index(
         help="Stream NDJSON progress events to stdout (one JSON object per line: "
              "start, progress per file, then a final complete summary)",
     ),
+    prune: bool = typer.Option(
+        False, "--prune",
+        help="After indexing, remove index entries for files under the folder "
+             "that no longer exist on disk (used by the file watcher).",
+    ),
     json_output: bool = typer.Option(False, "--json", help="(Accepted; output is always JSON)"),
 ) -> None:
     """Recursively index supported files in a folder.
@@ -319,10 +336,10 @@ def index(
     """
     try:
         if progress:
-            summary = run_index(folder, force=force, progress=_emit)
+            summary = run_index(folder, force=force, progress=_emit, prune=prune)
             _emit({"event": "complete", **summary})
         else:
-            _emit(run_index(folder, force=force))
+            _emit(run_index(folder, force=force, prune=prune))
     except Exception as exc:  # noqa: BLE001
         log.exception("index command failed")
         _emit_error(exc)
@@ -361,6 +378,20 @@ def local_search(
         _emit(run_local_search(query, limit=limit, scope=scope))
     except Exception as exc:  # noqa: BLE001
         log.exception("local-search command failed")
+        _emit_error(exc)
+        raise typer.Exit(code=1)
+
+
+@app.command()
+def remove(
+    folder: str = typer.Argument(..., help="Watched folder to drop from the index"),
+) -> None:
+    """Remove every indexed file under `folder` (when a watched folder is removed)."""
+    try:
+        removed = vector_store.remove_under(folder)
+        _emit({"status": "success", "removed_files": removed})
+    except Exception as exc:  # noqa: BLE001
+        log.exception("remove command failed")
         _emit_error(exc)
         raise typer.Exit(code=1)
 

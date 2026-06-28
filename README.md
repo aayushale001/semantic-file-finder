@@ -1,7 +1,7 @@
 # Semantic File Finder
 
-A native macOS app that indexes a folder of your files and lets you search them
-by **meaning** instead of filename — across text **and media**. A SwiftUI front
+A native macOS app that indexes one or more folders of your files and lets you
+search them by **meaning** instead of filename — across text **and media**. A SwiftUI front
 end drives a small Python helper that embeds everything with **Gemini Embedding 2**
 and stores the vectors in a local **LanceDB** database. Because Gemini Embedding 2
 is natively multimodal, text, images, audio, and video all land in the **same
@@ -170,9 +170,11 @@ environment variable or the `helperDirectory` UserDefaults key. The app sandbox 
 intentionally **off** in this development build so it can run the helper and read
 the folder you pick — re-enable it before any distribution.
 
-Use it: **Choose Folder → Index** (a live progress bar shows files done /
-remaining) **→ type a query → Return → Open**. Switch results between **list**
-and **icon** views with the segmented control in the toolbar.
+Use it: **Add Folder → Index All** (a live progress bar shows files done /
+remaining) **→ type a query → Return → Open**. You can watch multiple folders;
+the app auto-syncs changes in the background and lets you remove a watched
+folder from the index later. Switch results between **list** and **icon** views
+with the segmented control in the toolbar.
 
 If you are offline, already-indexed files still appear and searches fall back to
 local filename/path/text matching. Semantic search and indexing new content need
@@ -210,8 +212,8 @@ semantic search, Auto scope detection, indexed-file browsing, and offline local
 filename/text fallback. Still planned:
 
 - OCR for text inside images and scanned PDFs.
-- Background indexing and file-system watching.
 - Smart folders, saved searches, and auto-tagging.
+- More granular per-file incremental indexing for very large watched folders.
 - Optional hybrid keyword + semantic scoring for online search.
 - A distributable, sandboxed, signed/notarized macOS app bundle.
 - Keychain-backed API key setup for packaged releases.

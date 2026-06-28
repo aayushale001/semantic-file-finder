@@ -1,6 +1,6 @@
 """Code extractor.
 
-MVP: read the file as text. No AST parsing — the chunker splits code by line
+Read source files as text. No AST parsing yet — the chunker splits code by line
 ranges (see chunker._chunk_code).
 """
 from __future__ import annotations

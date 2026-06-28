@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 from datetime import datetime, timezone
 from typing import List, Optional
@@ -259,6 +260,50 @@ def local_search(
             score=None,
         ))
     return results
+
+
+# --- watched-folder maintenance (multi-root + file watching) ----------------
+# Stored file_paths are absolute and symlink-resolved (scanner uses Path.resolve),
+# so roots are normalized the same way before prefix matching.
+
+def _norm_root(root: str) -> str:
+    return os.path.realpath(os.path.expanduser(root))
+
+
+def _is_under(path: str, root: str) -> bool:
+    return path == root or path.startswith(root + os.sep)
+
+
+def indexed_files_under(root: str) -> List[str]:
+    """Distinct indexed file paths that live under `root`."""
+    tbl = get_table()
+    if tbl is None:
+        return []
+    root = _norm_root(root)
+    paths = set(_column_values(tbl, "file_path"))
+    return sorted(p for p in paths if p and _is_under(p, root))
+
+
+def prune_missing(root: str) -> List[str]:
+    """Delete indexed files under `root` that no longer exist on disk.
+
+    Powers the file-watcher's incremental sync: when files are deleted or moved,
+    their stale chunks are removed so search never points at vanished files.
+    """
+    removed: List[str] = []
+    for path in indexed_files_under(root):
+        if not os.path.exists(path):
+            delete_file(path)
+            removed.append(path)
+    return removed
+
+
+def remove_under(root: str) -> int:
+    """Delete every indexed file under `root` (when a watched folder is removed)."""
+    paths = indexed_files_under(root)
+    for path in paths:
+        delete_file(path)
+    return len(paths)
 
 
 def reset_index() -> None:

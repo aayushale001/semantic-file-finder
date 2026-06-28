@@ -7,7 +7,15 @@ struct IndexedFilesView: View {
     let files: [IndexedFile]
     let isLoading: Bool
     let hasFolder: Bool
+    let roots: [String]
     let viewMode: ResultViewMode
+
+    /// Show the originating folder only when more than one is watched.
+    private var showsRoot: Bool { roots.count > 1 }
+
+    private func rootLabel(for path: String) -> String? {
+        showsRoot ? RootResolver.displayName(for: path, among: roots) : nil
+    }
 
     var body: some View {
         Group {
@@ -36,20 +44,20 @@ struct IndexedFilesView: View {
             ContentUnavailableView(
                 "Nothing indexed yet",
                 systemImage: "tray",
-                description: Text("Click Index in the toolbar to add this folder's files — text, PDFs, code, images, audio, and video.")
+                description: Text("Click Index All in the toolbar to add watched folders' files — text, PDFs, code, images, audio, and video.")
             )
         } else {
             ContentUnavailableView(
-                "Index a folder to begin",
+                "Add a folder to begin",
                 systemImage: "folder.badge.plus",
-                description: Text("Choose a folder and index it; your files appear here, ready to search by meaning.")
+                description: Text("Add one or more folders and index them; your files appear here, ready to search by meaning.")
             )
         }
     }
 
     private var listView: some View {
         List(files) { file in
-            IndexedFileRow(file: file)
+            IndexedFileRow(file: file, rootLabel: rootLabel(for: file.filePath))
                 .listRowInsets(EdgeInsets(top: 6, leading: 12, bottom: 6, trailing: 12))
         }
         .listStyle(.inset)
@@ -63,7 +71,7 @@ struct IndexedFilesView: View {
                 spacing: 16
             ) {
                 ForEach(files) { file in
-                    IndexedFileCard(file: file)
+                    IndexedFileCard(file: file, rootLabel: rootLabel(for: file.filePath))
                 }
             }
             .padding(16)
@@ -75,6 +83,7 @@ struct IndexedFilesView: View {
 
 struct IndexedFileRow: View {
     let file: IndexedFile
+    var rootLabel: String? = nil
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
@@ -87,6 +96,9 @@ struct IndexedFileRow: View {
                         .lineLimit(1)
                         .truncationMode(.middle)
                     Spacer(minLength: 8)
+                    if let rootLabel {
+                        RootBadge(name: rootLabel)
+                    }
                     ModalityBadge(modality: file.modality)
                 }
 
@@ -118,6 +130,7 @@ struct IndexedFileRow: View {
 
 struct IndexedFileCard: View {
     let file: IndexedFile
+    var rootLabel: String? = nil
     @State private var hovering = false
 
     var body: some View {
@@ -131,6 +144,10 @@ struct IndexedFileCard: View {
                     .lineLimit(2)
                     .truncationMode(.middle)
                     .frame(maxWidth: .infinity, alignment: .leading)
+
+                if let rootLabel {
+                    RootBadge(name: rootLabel)
+                }
 
                 HStack(spacing: 6) {
                     ModalityBadge(modality: file.modality)

@@ -72,10 +72,12 @@ final class HelperService {
     func indexFolder(
         path: String,
         force: Bool = false,
+        prune: Bool = false,
         onProgress: (@Sendable (IndexProgress) -> Void)? = nil
     ) async throws -> IndexSummary {
         var args = ["index", path]
         if force { args.append("--force") }
+        if prune { args.append("--prune") }
 
         let summary: IndexSummary
         if let onProgress {
@@ -141,6 +143,16 @@ final class HelperService {
 
     func getModelInfo() async throws -> ModelInfo {
         try await run(["model-info"], as: ModelInfo.self)
+    }
+
+    /// Drop every indexed file under `path` (used when a watched folder is removed).
+    @discardableResult
+    func removeFolder(path: String) async throws -> Int {
+        let response = try await run(["remove", path], as: RemoveResponse.self)
+        if response.status != "success" {
+            throw HelperError.helperReturnedError(response.message ?? "Removing folder failed")
+        }
+        return response.removedFiles ?? 0
     }
 
     func resetIndex() async throws {

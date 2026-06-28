@@ -18,7 +18,8 @@ struct AppAlert: Identifiable {
 /// Owns all UI state and bridges the SwiftUI views to the Python helper.
 @MainActor
 final class AppViewModel: ObservableObject {
-    @Published var selectedFolder: String?
+    /// Watched folders that make up the index. Persisted across launches.
+    @Published var roots: [String] = []
     @Published var query: String = ""
     @Published var results: [SearchResult] = []
     @Published var indexSummary: IndexSummary?
@@ -34,8 +35,62 @@ final class AppViewModel: ObservableObject {
     @Published var isLoadingFiles = false
     @Published var searchNotice: String?
     @Published var activeAlert: AppAlert?
+    /// A transient "auto-syncing changes…" hint while the watcher re-indexes.
+    @Published var isAutoSyncing = false
 
     private let helper = HelperService()
+    private let watcher = FolderWatcher()
+
+    /// One queued indexing request. Indexing is serialized through `pendingJobs`
+    /// so manual re-index and watcher-triggered syncs never overlap.
+    private struct IndexJob: Equatable {
+        let path: String
+        let force: Bool
+        let background: Bool
+    }
+    private var pendingJobs: [IndexJob] = []
+    private var indexingActive = false
+
+    private static let rootsKey = "indexedRoots"
+
+    init() {
+        let savedRoots = UserDefaults.standard.stringArray(forKey: Self.rootsKey) ?? []
+        roots = Self.uniqueNormalizedPaths(savedRoots)
+        if roots != savedRoots {
+            saveRoots()
+        }
+        watcher.onChange = { [weak self] changed in
+            // FolderWatcher delivers on the main queue; hop onto the main actor.
+            Task { @MainActor in self?.handleWatchEvent(changed) }
+        }
+    }
+
+    private static func normalizedPath(_ path: String) -> String {
+        URL(fileURLWithPath: path)
+            .standardizedFileURL
+            .resolvingSymlinksInPath()
+            .path
+    }
+
+    private static func uniqueNormalizedPaths(_ paths: [String]) -> [String] {
+        var seen = Set<String>()
+        var unique: [String] = []
+        for raw in paths {
+            let path = normalizedPath(raw)
+            guard !seen.contains(path) else { continue }
+            seen.insert(path)
+            unique.append(path)
+        }
+        return unique
+    }
+
+    private func saveRoots() {
+        UserDefaults.standard.set(roots, forKey: Self.rootsKey)
+    }
+
+    private func startWatching() {
+        watcher.start(paths: roots)
+    }
 
     /// Turn a thrown error into a user-facing alert, giving the Gemini quota /
     /// rate-limit case a dedicated title so users know it's an API-limit issue.
@@ -62,6 +117,7 @@ final class AppViewModel: ObservableObject {
         await refreshStatus()
         await refreshFiles()
         modelInfo = try? await helper.getModelInfo()
+        startWatching()
     }
 
     func refreshStatus() async {
@@ -75,23 +131,89 @@ final class AppViewModel: ObservableObject {
         indexedFiles = (try? await helper.listFiles()) ?? indexedFiles
     }
 
-    func index(force: Bool = false) async {
-        guard let folder = selectedFolder, !isIndexing else { return }
+    // MARK: Watched folders
+
+    /// Pick a folder, start watching it, and index it.
+    func addFolder() {
+        guard let picked = chooseFolderPath() else { return }
+        let path = Self.normalizedPath(picked)
+        guard !roots.contains(path) else { return }
+        roots.append(path)
+        saveRoots()
+        startWatching()
+        enqueueIndex([IndexJob(path: path, force: false, background: false)])
+    }
+
+    /// Stop watching a folder and drop its files from the index.
+    func removeFolder(_ path: String) async {
+        let previousRoots = roots
+        roots.removeAll { $0 == path }
+        saveRoots()
+        startWatching()
+        do {
+            try await helper.removeFolder(path: path)
+        } catch {
+            roots = previousRoots
+            saveRoots()
+            startWatching()
+            present(error)
+        }
+        await refreshStatus()
+        await refreshFiles()
+    }
+
+    /// Re-index every watched folder (manual "Index All").
+    func indexAll(force: Bool = false) {
+        enqueueIndex(roots.map { IndexJob(path: $0, force: force, background: false) })
+    }
+
+    // MARK: File-watching → incremental sync
+
+    private func handleWatchEvent(_ changed: Set<String>) {
+        enqueueIndex(changed.map { IndexJob(path: $0, force: false, background: true) })
+    }
+
+    private func enqueueIndex(_ jobs: [IndexJob]) {
+        for job in jobs where !pendingJobs.contains(where: { $0.path == job.path }) {
+            pendingJobs.append(job)
+        }
+        Task { await drainIndexQueue() }
+    }
+
+    /// Serially process queued indexing jobs so manual and background runs
+    /// never overlap (one Python subprocess and one DB writer at a time).
+    private func drainIndexQueue() async {
+        guard !indexingActive else { return }
+        indexingActive = true
         isIndexing = true
-        indexProgress = nil
         defer {
+            indexingActive = false
             isIndexing = false
+            isAutoSyncing = false
             indexProgress = nil
         }
+        while !pendingJobs.isEmpty {
+            let job = pendingJobs.removeFirst()
+            isAutoSyncing = job.background
+            await runIndex(job)
+        }
+        await refreshStatus()
+        await refreshFiles()
+    }
+
+    private func runIndex(_ job: IndexJob) async {
+        indexProgress = nil
         do {
-            indexSummary = try await helper.indexFolder(path: folder, force: force) { [weak self] progress in
+            indexSummary = try await helper.indexFolder(
+                path: job.path, force: job.force, prune: true
+            ) { [weak self] progress in
                 // Delivered off the main actor — hop back to update published state.
                 Task { @MainActor in self?.indexProgress = progress }
             }
-            await refreshStatus()
-            await refreshFiles()
         } catch {
-            present(error)
+            // Background syncs shouldn't nag: offline / quota errors are expected
+            // and will clear on their own. Surface only user-initiated failures.
+            if !job.background { present(error) }
         }
     }
 
@@ -173,13 +295,15 @@ struct ContentView: View {
                         hasSearched: viewModel.hasSearched,
                         isSearching: viewModel.isSearching,
                         searchNotice: viewModel.searchNotice,
+                        roots: viewModel.roots,
                         viewMode: viewMode
                     )
                 } else {
                     IndexedFilesView(
                         files: viewModel.indexedFiles,
                         isLoading: viewModel.isLoadingFiles,
-                        hasFolder: viewModel.selectedFolder != nil,
+                        hasFolder: !viewModel.roots.isEmpty,
+                        roots: viewModel.roots,
                         viewMode: viewMode
                     )
                 }
@@ -244,8 +368,11 @@ struct ContentView: View {
     }
 
     private var subtitle: String {
-        guard let folder = viewModel.selectedFolder else { return "No folder chosen" }
-        return URL(fileURLWithPath: folder).lastPathComponent
+        switch viewModel.roots.count {
+        case 0: return "No folders watched"
+        case 1: return URL(fileURLWithPath: viewModel.roots[0]).lastPathComponent
+        default: return "\(viewModel.roots.count) folders watched"
+        }
     }
 
     private var alertBinding: Binding<Bool> {
@@ -259,21 +386,43 @@ struct ContentView: View {
     private var toolbarContent: some ToolbarContent {
         ToolbarItemGroup(placement: .navigation) {
             Button {
-                if let picked = chooseFolderPath() {
-                    viewModel.selectedFolder = picked
+                viewModel.addFolder()
+            } label: {
+                Label("Add Folder", systemImage: "folder.badge.plus")
+            }
+            .help("Add a folder to watch and index")
+
+            Menu {
+                if viewModel.roots.isEmpty {
+                    Text("No folders watched yet")
+                } else {
+                    ForEach(viewModel.roots, id: \.self) { root in
+                        Menu(URL(fileURLWithPath: root).lastPathComponent) {
+                            Button {
+                                FileActions.reveal(root)
+                            } label: {
+                                Label("Reveal in Finder", systemImage: "folder")
+                            }
+                            Button(role: .destructive) {
+                                Task { await viewModel.removeFolder(root) }
+                            } label: {
+                                Label("Stop Watching & Remove", systemImage: "minus.circle")
+                            }
+                        }
+                    }
                 }
             } label: {
-                Label("Choose Folder", systemImage: "folder.badge.plus")
+                Label("Folders", systemImage: "folder")
             }
-            .help("Choose a folder to index")
+            .help("Watched folders")
 
             Button {
-                Task { await viewModel.index() }
+                viewModel.indexAll()
             } label: {
-                Label("Index", systemImage: "tray.and.arrow.down")
+                Label("Index All", systemImage: "tray.and.arrow.down")
             }
-            .disabled(viewModel.selectedFolder == nil || viewModel.isIndexing)
-            .help("Index the selected folder")
+            .disabled(viewModel.roots.isEmpty || viewModel.isIndexing)
+            .help("Re-index every watched folder")
         }
 
         ToolbarItemGroup(placement: .primaryAction) {
@@ -299,19 +448,11 @@ struct ContentView: View {
 
             Menu {
                 Button {
-                    Task { await viewModel.index(force: true) }
+                    viewModel.indexAll(force: true)
                 } label: {
-                    Label("Re-index (force)", systemImage: "arrow.clockwise")
+                    Label("Re-index All (force)", systemImage: "arrow.clockwise")
                 }
-                .disabled(viewModel.selectedFolder == nil || viewModel.isIndexing)
-
-                if let folder = viewModel.selectedFolder {
-                    Button {
-                        FileActions.reveal(folder)
-                    } label: {
-                        Label("Reveal Folder in Finder", systemImage: "folder")
-                    }
-                }
+                .disabled(viewModel.roots.isEmpty || viewModel.isIndexing)
 
                 Divider()
 
@@ -335,17 +476,22 @@ private struct StatusBar: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            Image(systemName: "folder")
+            Image(systemName: viewModel.roots.isEmpty ? "folder" : "folder.fill.badge.gearshape")
                 .foregroundStyle(.secondary)
-            if let folder = viewModel.selectedFolder {
-                Text(folder)
+            if viewModel.roots.isEmpty {
+                Text("No folders watched")
+                    .foregroundStyle(.tertiary)
+            } else {
+                Text(foldersSummary)
                     .lineLimit(1)
                     .truncationMode(.middle)
-                    .textSelection(.enabled)
                     .foregroundStyle(.secondary)
-            } else {
-                Text("No folder selected")
-                    .foregroundStyle(.tertiary)
+            }
+
+            if viewModel.isAutoSyncing {
+                Text("·").foregroundStyle(.tertiary)
+                Label("Syncing changes…", systemImage: "arrow.triangle.2.circlepath")
+                    .foregroundStyle(.secondary)
             }
 
             Spacer(minLength: 12)
@@ -378,6 +524,14 @@ private struct StatusBar: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(.bar)
         .overlay(alignment: .top) { Divider() }
+    }
+
+    private var foldersSummary: String {
+        if viewModel.roots.count == 1 {
+            return viewModel.roots[0]
+        }
+        let names = viewModel.roots.map { URL(fileURLWithPath: $0).lastPathComponent }
+        return "\(viewModel.roots.count) folders · " + names.joined(separator: ", ")
     }
 
     private var indexStatsText: String {

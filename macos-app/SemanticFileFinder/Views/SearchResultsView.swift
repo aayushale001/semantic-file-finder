@@ -9,7 +9,12 @@ struct SearchResultsView: View {
     let hasSearched: Bool
     let isSearching: Bool
     let searchNotice: String?
+    let roots: [String]
     let viewMode: ResultViewMode
+
+    /// Show the originating folder only when more than one is watched (otherwise
+    /// the badge is redundant with the single root).
+    private var showsRoot: Bool { roots.count > 1 }
 
     var body: some View {
         Group {
@@ -65,7 +70,7 @@ struct SearchResultsView: View {
             ContentUnavailableView(
                 "Search your files by meaning",
                 systemImage: "sparkles",
-                description: Text("Choose a folder, index it, then type a natural-language query.")
+                description: Text("Add a folder, index it, then type a natural-language query.")
             )
         }
     }
@@ -74,10 +79,14 @@ struct SearchResultsView: View {
 
     private var listView: some View {
         List(results) { result in
-            ResultRow(result: result)
+            ResultRow(result: result, rootLabel: rootLabel(for: result.filePath))
                 .listRowInsets(EdgeInsets(top: 6, leading: 12, bottom: 6, trailing: 12))
         }
         .listStyle(.inset)
+    }
+
+    private func rootLabel(for path: String) -> String? {
+        showsRoot ? RootResolver.displayName(for: path, among: roots) : nil
     }
 
     // MARK: Icon grid
@@ -90,7 +99,7 @@ struct SearchResultsView: View {
                 spacing: 16
             ) {
                 ForEach(results) { result in
-                    ResultCard(result: result)
+                    ResultCard(result: result, rootLabel: rootLabel(for: result.filePath))
                 }
             }
             .padding(16)
@@ -103,6 +112,7 @@ struct SearchResultsView: View {
 /// A single result row: icon, name, score, preview, path, and inline actions.
 struct ResultRow: View {
     let result: SearchResult
+    var rootLabel: String? = nil
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
@@ -120,6 +130,9 @@ struct ResultRow: View {
                             .foregroundStyle(.tertiary)
                     }
                     Spacer(minLength: 8)
+                    if let rootLabel {
+                        RootBadge(name: rootLabel)
+                    }
                     if let score = result.score {
                         ScoreBadge(score: score)
                     }
@@ -155,6 +168,7 @@ struct ResultRow: View {
 /// A Finder-style tile: large colored icon, file name, preview, and a score badge.
 struct ResultCard: View {
     let result: SearchResult
+    var rootLabel: String? = nil
     @State private var hovering = false
 
     var body: some View {
@@ -165,6 +179,10 @@ struct ResultCard: View {
                 if let score = result.score {
                     ScoreBadge(score: score)
                 }
+            }
+
+            if let rootLabel {
+                RootBadge(name: rootLabel)
             }
 
             Text(result.fileName)
@@ -335,6 +353,41 @@ struct OpenRevealButtons: View {
         Button { FileActions.copyPath(path) } label: {
             Label("Copy Path", systemImage: "doc.on.doc")
         }
+    }
+}
+
+/// Resolves which watched root a file path belongs to (most specific wins).
+enum RootResolver {
+    static func displayName(for path: String, among roots: [String]) -> String? {
+        let normalizedPath = normalize(path)
+        let match = roots
+            .map(normalize)
+            .filter { normalizedPath == $0 || normalizedPath.hasPrefix($0 + "/") }
+            .max(by: { $0.count < $1.count })
+        return match.map { URL(fileURLWithPath: $0).lastPathComponent }
+    }
+
+    private static func normalize(_ path: String) -> String {
+        URL(fileURLWithPath: path)
+            .standardizedFileURL
+            .resolvingSymlinksInPath()
+            .path
+    }
+}
+
+/// A small capsule naming the watched folder a file came from.
+struct RootBadge: View {
+    let name: String
+
+    var body: some View {
+        Label(name, systemImage: "folder")
+            .font(.caption2.weight(.medium))
+            .lineLimit(1)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(Capsule().fill(Color.accentColor.opacity(0.12)))
+            .foregroundStyle(Color.accentColor)
+            .help("In watched folder: \(name)")
     }
 }
 
