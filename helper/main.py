@@ -37,15 +37,29 @@ def _emit(payload: dict) -> None:
     sys.stdout.flush()
 
 
-def _emit_error(exc: Exception) -> None:
-    """Emit a single JSON error object, tagging Gemini quota / rate-limit (429)
-    failures with `error_code` so the app can show a dedicated message."""
+def _error_payload(exc: Exception) -> dict:
+    """JSON error object for `exc`, tagging Gemini quota / rate-limit (429) and
+    offline failures with `error_code` so the app can react specifically."""
     payload = {"status": "error", "message": str(exc)}
     if isinstance(exc, embeddings.QuotaExceededError) or embeddings.is_quota_error(exc):
         payload["error_code"] = "quota_exceeded"
     elif isinstance(exc, embeddings.NetworkUnavailableError) or embeddings.is_network_error(exc):
         payload["error_code"] = "network_unavailable"
-    _emit(payload)
+    return payload
+
+
+def _emit_error(exc: Exception) -> None:
+    _emit(_error_payload(exc))
+
+
+def _model_info_payload() -> dict:
+    return {
+        "status": "success",
+        "embedding_provider": config.EMBEDDING_PROVIDER,
+        "embedding_model": config.resolve_embedding_model(),
+        "embedding_dimensions": config.EMBEDDING_DIMENSIONS,
+        "text_only_mode": config.TEXT_ONLY_MODE,
+    }
 
 
 def _now_iso() -> str:
@@ -434,18 +448,97 @@ def reset() -> None:
 def model_info() -> None:
     """Report the configured embedding provider/model/dimensions."""
     try:
-        model = config.resolve_embedding_model()
-        _emit({
-            "status": "success",
-            "embedding_provider": config.EMBEDDING_PROVIDER,
-            "embedding_model": model,
-            "embedding_dimensions": config.EMBEDDING_DIMENSIONS,
-            "text_only_mode": config.TEXT_ONLY_MODE,
-        })
+        _emit(_model_info_payload())
     except Exception as exc:  # noqa: BLE001
         log.exception("model-info command failed")
-        _emit({"status": "error", "message": str(exc)})
+        _emit_error(exc)
         raise typer.Exit(code=1)
+
+
+def _serve_dispatch(cmd: str, args: dict, emit_progress: Callable[[dict], None]) -> dict:
+    """Execute one server request and return its JSON-able result payload.
+
+    Reuses the exact same functions as the CLI commands, so the payload shapes
+    (and the Swift Codable models that decode them) are identical in both modes.
+    """
+    if cmd == "ping":
+        return {"status": "success"}
+    if cmd == "search":
+        return run_search(
+            str(args.get("query", "")),
+            limit=int(args.get("limit", 10)),
+            scope=str(args.get("scope", "auto")),
+        )
+    if cmd == "local-search":
+        return run_local_search(
+            str(args.get("query", "")),
+            limit=int(args.get("limit", 10)),
+            scope=str(args.get("scope", "auto")),
+        )
+    if cmd == "index":
+        folder = args.get("folder")
+        if not folder:
+            return {"status": "error", "message": "index requires a 'folder' argument"}
+        return run_index(
+            str(folder),
+            force=bool(args.get("force", False)),
+            prune=bool(args.get("prune", False)),
+            progress=emit_progress if args.get("progress") else None,
+        )
+    if cmd == "list":
+        return {"status": "success", "files": vector_store.list_indexed_files()}
+    if cmd == "status":
+        return {"status": "success", **vector_store.get_status()}
+    if cmd == "model-info":
+        return _model_info_payload()
+    if cmd == "remove":
+        folder = args.get("folder")
+        if not folder:
+            return {"status": "error", "message": "remove requires a 'folder' argument"}
+        return {"status": "success", "removed_files": vector_store.remove_under(str(folder))}
+    if cmd == "reset":
+        vector_store.reset_index()
+        return {"status": "success", "message": "Index reset successfully"}
+    return {"status": "error", "message": f"Unknown command '{cmd}'"}
+
+
+@app.command()
+def serve() -> None:
+    """Run as a persistent JSON-lines server (the macOS app's fast path).
+
+    Reads one request per stdin line — {"id": ..., "cmd": ..., "args": {...}} —
+    and writes one JSON object per line to stdout: optional {"type": "progress"}
+    events, then a terminal {"type": "result"} or {"type": "error"}, each tagged
+    with the request's id. Exits cleanly on stdin EOF. Keeping one process alive
+    keeps the interpreter, Gemini client, and LanceDB connection warm, which is
+    what makes app commands fast after the first call.
+    """
+    _emit({"type": "ready", "protocol": 1})
+    for raw in iter(sys.stdin.readline, ""):
+        line = raw.strip()
+        if not line:
+            continue
+        req_id = None
+        try:
+            request = json.loads(line)
+            req_id = request.get("id")
+            cmd = str(request.get("cmd") or "")
+            args = request.get("args") or {}
+
+            def emit_progress(event: dict, _id=req_id) -> None:
+                _emit({"id": _id, "type": "progress", **event})
+
+            payload = _serve_dispatch(cmd, args, emit_progress)
+            kind = "error" if payload.get("status") == "error" else "result"
+            _emit({"id": req_id, "type": kind, **payload})
+        except BrokenPipeError:  # the app went away — nothing left to serve
+            break
+        except Exception as exc:  # noqa: BLE001 - one bad request must not kill the server
+            log.exception("serve request failed")
+            try:
+                _emit({"id": req_id, "type": "error", **_error_payload(exc)})
+            except Exception:  # noqa: BLE001 - stdout is gone; shut down
+                break
 
 
 if __name__ == "__main__":

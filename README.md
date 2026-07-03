@@ -32,16 +32,23 @@ thumbnails, switchable between list and icon views.
 ## Architecture
 
 ```
-SwiftUI macOS App  ──runs──▶  Python helper CLI (JSON over stdout)
-                                  │
-            scan ▶ extract ▶ chunk ▶ Gemini Embedding 2 ▶ LanceDB
-                                                              │
-SwiftUI results  ◀──────────────  JSON  ◀─────────────────────┘
+SwiftUI macOS App  ──keeps alive──▶  Python helper server (JSON lines over stdin/stdout)
+                                        │
+                  scan ▶ extract ▶ chunk ▶ Gemini Embedding 2 ▶ LanceDB
+                                                                    │
+SwiftUI results  ◀────────────────  JSON  ◀─────────────────────────┘
 ```
 
 Gemini creates embeddings and, for unclear Auto-scope queries, helps classify
 intent. LanceDB stores and searches the local index. SwiftUI handles UI and calls
 the helper.
+
+The app keeps **one persistent helper process** (`main.py serve`) alive for
+interactive commands — search, browsing, status — so the Python interpreter,
+Gemini client, and LanceDB connection stay warm and a search costs ~1 ms of
+transport instead of ~1 s of process startup. Indexing runs in its own one-shot
+subprocess so a long background index never blocks a search; the same commands
+also exist as a plain CLI for scripting and debugging.
 
 ## Project structure
 

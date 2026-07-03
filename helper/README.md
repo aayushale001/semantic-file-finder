@@ -15,24 +15,28 @@ fallback that does not call Gemini.
 ## Commands
 
 ```bash
-python main.py index "/path/to/folder" [--force] [--progress] [--json]
+python main.py index "/path/to/folder" [--force] [--progress] [--prune] [--json]
 python main.py search "natural language query" [--limit 10] [--scope auto|all|documents|images|audio|video]
 python main.py local-search "filename or text" [--limit 10] [--scope auto|all|documents|images|audio|video]
 python main.py list
 python main.py status
+python main.py remove "/path/to/folder"
 python main.py reset
 python main.py model-info
+python main.py serve
 ```
 
 | Command | Returns |
 |---|---|
-| `index` | `{indexed_files, skipped_files, indexed_chunks, errors[]}` |
+| `index` | `{indexed_files, skipped_files, indexed_chunks, pruned_files, errors[]}` |
 | `search` | `{query, scope, results[]}` (sorted by similarity; `--scope` limits to a kind) |
 | `local-search` | `{query, scope, results[]}` (offline filename/path/text matches; no Gemini call) |
 | `list` | `{files[]}` — distinct indexed files (`file_path, file_name, file_extension, modality, chunk_count, …`) |
 | `status` | `{total_chunks, total_files, db_path}` |
+| `remove` | `{removed_files}` (drops every indexed file under the folder) |
 | `reset` | `{message}` (drops the table + index metadata) |
 | `model-info` | `{embedding_provider, embedding_model, embedding_dimensions, text_only_mode}` |
+| `serve` | persistent JSON-lines server (see below) |
 
 `index` skips files whose path + mtime + size are unchanged unless `--force` is
 given. One failing file never aborts the whole job — it is added to `errors`.
@@ -41,7 +45,24 @@ With `--progress`, `index` instead streams **newline-delimited JSON** so the app
 can show a live progress bar: a `{"event": "start", "total": N}` line, one
 `{"event": "progress", "current": i, "total": N, "file_name": …, "indexed_files":
 …, "skipped_files": …}` line per file, then a final `{"event": "complete", …}`
-line carrying the usual summary fields.
+line carrying the usual summary fields. With `--prune`, indexed files under the
+folder that no longer exist on disk are removed afterward.
+
+**`serve` — persistent server mode (the app's fast path).** Instead of paying a
+fresh interpreter + LanceDB import (~1 s) per command, the app keeps one
+`main.py serve` process alive and sends one JSON request per stdin line:
+
+```
+→ {"id": "1", "cmd": "search", "args": {"query": "tax invoices", "scope": "auto", "limit": 10}}
+← {"id": "1", "type": "result", "status": "success", "results": [...]}
+```
+
+Each response line carries the request's `id` and a `type` — `result`, `error`
+(same `message`/`error_code` fields as the CLI), or `progress` (for `index` when
+`"progress": true` is passed). The server prints `{"type": "ready"}` on startup,
+answers requests serially, reuses the CLI's exact payload shapes, and exits
+cleanly on stdin EOF. Commands: `ping`, `search`, `local-search`, `index`,
+`list`, `status`, `model-info`, `remove`, `reset`.
 
 **Media (`gemini-embedding-2`).** Text/docs/code are extracted and chunked; images,
 audio, and video are embedded directly — no text extraction — into the *same*

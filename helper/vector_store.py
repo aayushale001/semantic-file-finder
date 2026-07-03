@@ -20,11 +20,23 @@ class IndexMismatchError(RuntimeError):
     """Raised when the index's embedding model differs from the configured one."""
 
 
+_db = None
+
+
 def get_db():
-    """Connect to (creating if needed) the local LanceDB at config.DB_PATH."""
-    import lancedb
-    config.ensure_dirs()
-    return lancedb.connect(str(config.DB_PATH))
+    """Connect to (creating if needed) the local LanceDB at config.DB_PATH.
+
+    The connection is cached for the life of the process — in `serve` mode this
+    keeps repeat commands fast. Tables are deliberately *not* cached:
+    `open_table` re-reads the latest committed version, so writes from a
+    separate `index` subprocess stay visible to the server's reads.
+    """
+    global _db
+    if _db is None:
+        import lancedb
+        config.ensure_dirs()
+        _db = lancedb.connect(str(config.DB_PATH))
+    return _db
 
 
 def _schema() -> pa.Schema:
