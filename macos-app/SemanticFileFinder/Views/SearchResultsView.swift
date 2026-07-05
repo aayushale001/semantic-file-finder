@@ -37,18 +37,19 @@ struct SearchResultsView: View {
             }
         }
         .overlay(alignment: .top) {
-            if let searchNotice {
-                Label(searchNotice, systemImage: "wifi.slash")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 7)
-                    .background(.regularMaterial, in: Capsule())
-                    .padding(.top, 12)
+            Group {
+                if let searchNotice {
+                    Label(searchNotice, systemImage: "wifi.slash")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 7)
+                        .background(.regularMaterial, in: Capsule())
+                        .padding(.top, 12)
+                }
             }
+            .animation(.smooth(duration: 0.2), value: searchNotice)
         }
-        .animation(.smooth(duration: 0.2), value: viewMode)
-        .animation(.smooth(duration: 0.2), value: searchNotice)
     }
 
     // MARK: Empty states
@@ -77,11 +78,18 @@ struct SearchResultsView: View {
     // MARK: List
 
     private var listView: some View {
-        List(results) { result in
-            ResultRow(result: result, rootLabel: rootLabel(for: result.filePath))
-                .listRowInsets(EdgeInsets(top: 6, leading: 12, bottom: 6, trailing: 12))
+        ScrollView {
+            LazyVStack(spacing: 0) {
+                ForEach(results) { result in
+                    ResultRow(result: result, rootLabel: rootLabel(for: result.filePath))
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                    Divider()
+                        .padding(.leading, 54)
+                }
+            }
+            .padding(.vertical, 6)
         }
-        .listStyle(.inset)
     }
 
     private func rootLabel(for path: String) -> String? {

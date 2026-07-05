@@ -404,11 +404,11 @@ struct ContentView: View {
                 }
                 .padding(.bottom, viewModel.isIndexing ? 0 : 12)
                 .frame(maxWidth: .infinity)
+                .animation(.smooth(duration: 0.25), value: viewModel.isIndexing)
             }
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 StatusBar(viewModel: viewModel)
             }
-            .animation(.smooth(duration: 0.25), value: viewModel.isIndexing)
         }
         .frame(minWidth: 760, minHeight: 580)
         .task {

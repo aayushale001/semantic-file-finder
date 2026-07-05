@@ -2,7 +2,10 @@ import Foundation
 
 /// One search hit, decoded from the helper's `search` JSON.
 struct SearchResult: Codable, Identifiable, Equatable {
-    let id = UUID()
+    /// Stable across refreshes (a UUID minted per decode made every update
+    /// replace all table rows, churning the NSTableView delegate for nothing).
+    var id: String { "\(filePath)#\(chunkIndex)" }
+
     let fileName: String
     let filePath: String
     let fileExtension: String

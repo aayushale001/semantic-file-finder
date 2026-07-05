@@ -31,7 +31,6 @@ struct IndexedFilesView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .animation(.smooth(duration: 0.2), value: viewMode)
     }
 
     @ViewBuilder
@@ -70,11 +69,18 @@ struct IndexedFilesView: View {
     }
 
     private var listView: some View {
-        List(files) { file in
-            IndexedFileRow(file: file, rootLabel: rootLabel(for: file.filePath))
-                .listRowInsets(EdgeInsets(top: 6, leading: 12, bottom: 6, trailing: 12))
+        ScrollView {
+            LazyVStack(spacing: 0) {
+                ForEach(files) { file in
+                    IndexedFileRow(file: file, rootLabel: rootLabel(for: file.filePath))
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                    Divider()
+                        .padding(.leading, 56)
+                }
+            }
+            .padding(.vertical, 6)
         }
-        .listStyle(.inset)
     }
 
     private var gridView: some View {

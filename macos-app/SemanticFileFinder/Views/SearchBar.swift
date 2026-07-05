@@ -68,6 +68,10 @@ struct SearchBar: View {
         .padding(.vertical, 12)
         .liquidGlass(Capsule(), interactive: true)
         .frame(maxWidth: 620)
-        .onAppear { focused = true }
+        .onAppear {
+            // Defer the focus grab one turn so it does not fight the window's
+            // own first-responder setup during the appearance pass.
+            Task { @MainActor in focused = true }
+        }
     }
 }
