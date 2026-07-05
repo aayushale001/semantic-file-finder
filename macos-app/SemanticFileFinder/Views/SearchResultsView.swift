@@ -48,7 +48,6 @@ struct SearchResultsView: View {
             }
         }
         .animation(.smooth(duration: 0.2), value: viewMode)
-        .animation(.smooth(duration: 0.2), value: results)
         .animation(.smooth(duration: 0.2), value: searchNotice)
     }
 
@@ -116,7 +115,7 @@ struct ResultRow: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
-            Thumbnail(path: result.filePath, ext: result.fileExtension, size: 30)
+            FileIcon(ext: result.fileExtension, size: 30)
 
             VStack(alignment: .leading, spacing: 4) {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {

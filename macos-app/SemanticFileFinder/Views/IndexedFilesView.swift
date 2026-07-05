@@ -32,7 +32,6 @@ struct IndexedFilesView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .animation(.smooth(duration: 0.2), value: viewMode)
-        .animation(.smooth(duration: 0.2), value: files)
     }
 
     @ViewBuilder
@@ -102,7 +101,7 @@ struct IndexedFileRow: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
-            Thumbnail(path: file.filePath, ext: file.fileExtension, size: 32)
+            FileIcon(ext: file.fileExtension, size: 32)
 
             VStack(alignment: .leading, spacing: 4) {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {

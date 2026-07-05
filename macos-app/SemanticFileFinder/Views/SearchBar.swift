@@ -40,15 +40,25 @@ struct SearchBar: View {
             Divider().frame(height: 22)
 
             Menu {
-                Picker("Search in", selection: $scope) {
-                    ForEach(SearchScope.allCases) { scope in
-                        Label(scope.label, systemImage: scope.systemImage).tag(scope)
+                ForEach(SearchScope.allCases) { option in
+                    Button {
+                        scope = option
+                    } label: {
+                        Label(
+                            option.label,
+                            systemImage: option == scope ? "checkmark" : option.systemImage
+                        )
                     }
                 }
             } label: {
-                Label(scope.label, systemImage: scope.systemImage)
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
+                HStack(spacing: 5) {
+                    Label(scope.label, systemImage: scope.systemImage)
+                    Image(systemName: "chevron.down")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.tertiary)
+                }
+                .font(.callout)
+                .foregroundStyle(.secondary)
             }
             .menuStyle(.borderlessButton)
             .fixedSize()
