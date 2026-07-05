@@ -7,6 +7,8 @@ struct IndexedFilesView: View {
     let files: [IndexedFile]
     let isLoading: Bool
     let hasFolder: Bool
+    let hasIndexedContent: Bool
+    let loadError: String?
     let roots: [String]
     let viewMode: ResultViewMode
 
@@ -29,18 +31,31 @@ struct IndexedFilesView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .overlay {
-            if isLoading && files.isEmpty {
-                ProgressView().controlSize(.large)
-            }
-        }
         .animation(.smooth(duration: 0.2), value: viewMode)
         .animation(.smooth(duration: 0.2), value: files)
     }
 
     @ViewBuilder
     private var emptyState: some View {
-        if hasFolder {
+        if isLoading {
+            ContentUnavailableView(
+                "Loading indexed files…",
+                systemImage: "tray.full",
+                description: Text("Reading the local index so your files can appear here.")
+            )
+        } else if let loadError {
+            ContentUnavailableView(
+                "Could not load indexed files",
+                systemImage: "exclamationmark.triangle",
+                description: Text(loadError)
+            )
+        } else if hasIndexedContent {
+            ContentUnavailableView(
+                "Indexed files found",
+                systemImage: "externaldrive",
+                description: Text("The local index has files, but the gallery did not return any rows. Try reopening the app, or reset and re-index if this keeps happening.")
+            )
+        } else if hasFolder {
             ContentUnavailableView(
                 "Nothing indexed yet",
                 systemImage: "tray",

@@ -7,6 +7,7 @@ struct SearchBar: View {
     @Binding var scope: SearchScope
     var isSearching: Bool
     var onSubmit: () -> Void
+    var onClear: (() -> Void)? = nil
 
     @FocusState private var focused: Bool
 
@@ -27,6 +28,7 @@ struct SearchBar: View {
             } else if !query.isEmpty {
                 Button {
                     query = ""
+                    onClear?()
                 } label: {
                     Image(systemName: "xmark.circle.fill")
                         .foregroundStyle(.tertiary)

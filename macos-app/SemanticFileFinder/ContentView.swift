@@ -33,7 +33,8 @@ final class AppViewModel: ObservableObject {
     @Published var scope: SearchScope = .auto
     @Published var detectedScopeLabel: String?   // what "auto" resolved to, for display
     @Published var indexedFiles: [IndexedFile] = []
-    @Published var isLoadingFiles = false
+    @Published var isLoadingFiles = true
+    @Published var fileListError: String?
     @Published var searchNotice: String?
     @Published var activeAlert: AppAlert?
     /// A transient "auto-syncing changes…" hint while the watcher re-indexes.
@@ -115,9 +116,22 @@ final class AppViewModel: ObservableObject {
     }
 
     func loadInitialState() async {
-        await refreshStatus()
-        await refreshFiles()
-        modelInfo = try? await helper.getModelInfo()
+        // The three startup reads are independent one-shot subprocesses, so run
+        // them concurrently: the slowest helper call controls startup instead
+        // of paying the three process launches sequentially.
+        isLoadingFiles = true
+        fileListError = nil
+        defer { isLoadingFiles = false }
+        async let filesTask = helper.listFiles()
+        async let statusTask = helper.getStatus()
+        async let modelTask = helper.getModelInfo()
+        do {
+            indexedFiles = try await filesTask
+        } catch {
+            fileListError = error.localizedDescription
+        }
+        status = try? await statusTask
+        modelInfo = try? await modelTask
         startWatching()
     }
 
@@ -128,14 +142,26 @@ final class AppViewModel: ObservableObject {
 
     func refreshFiles() async {
         isLoadingFiles = true
+        fileListError = nil
         defer { isLoadingFiles = false }
-        indexedFiles = (try? await helper.listFiles()) ?? indexedFiles
+        do {
+            indexedFiles = try await helper.listFiles()
+        } catch {
+            fileListError = error.localizedDescription
+        }
     }
 
     // MARK: Gemini API key (bring-your-own-key)
 
     /// A key saved through the app's Settings (as opposed to a .env dev setup).
     var hasStoredAPIKey: Bool { KeychainStore.readAPIKey() != nil }
+
+    /// True when there is already something useful to show on the home screen.
+    /// This keeps existing offline/indexed-file browsing from being covered by
+    /// first-run key setup.
+    var hasIndexedContent: Bool {
+        !indexedFiles.isEmpty || (status?.totalFiles ?? 0) > 0
+    }
 
     /// Save `key` to the Keychain, restart the helper so it picks the key up,
     /// and validate it with a lightweight metadata call. Returns nil on success,
@@ -291,6 +317,14 @@ final class AppViewModel: ObservableObject {
         }
     }
 
+    func returnHome() {
+        query = ""
+        results = []
+        hasSearched = false
+        detectedScopeLabel = nil
+        searchNotice = nil
+    }
+
     func reset() async {
         do {
             try await helper.resetIndex()
@@ -338,6 +372,8 @@ struct ContentView: View {
                         files: viewModel.indexedFiles,
                         isLoading: viewModel.isLoadingFiles,
                         hasFolder: !viewModel.roots.isEmpty,
+                        hasIndexedContent: viewModel.hasIndexedContent,
+                        loadError: viewModel.fileListError,
                         roots: viewModel.roots,
                         viewMode: viewMode
                     )
@@ -355,7 +391,8 @@ struct ContentView: View {
                         query: $viewModel.query,
                         scope: $viewModel.scope,
                         isSearching: viewModel.isSearching,
-                        onSubmit: { Task { await viewModel.search() } }
+                        onSubmit: { Task { await viewModel.search() } },
+                        onClear: { viewModel.returnHome() }
                     )
                     .padding(.horizontal, 20)
                     .padding(.top, 14)
@@ -376,8 +413,10 @@ struct ContentView: View {
         .frame(minWidth: 760, minHeight: 580)
         .task {
             await viewModel.loadInitialState()
-            // First run: no key from any source — walk the user through setup.
-            if viewModel.modelInfo?.hasApiKey == false {
+            // First run: no key and nothing indexed yet — walk the user through
+            // setup. If files are already indexed, keep the file-manager-style
+            // home gallery visible; Settings remains available from the toolbar.
+            if viewModel.modelInfo?.hasApiKey == false && !viewModel.hasIndexedContent {
                 presentedSheet = .settings
             }
         }
@@ -469,6 +508,15 @@ struct ContentView: View {
         }
 
         ToolbarItemGroup(placement: .primaryAction) {
+            if isSearchActive {
+                Button {
+                    viewModel.returnHome()
+                } label: {
+                    Label("Home", systemImage: "house")
+                }
+                .help("Back to indexed files")
+            }
+
             if !viewModel.results.isEmpty || !viewModel.indexedFiles.isEmpty {
                 Picker("View Mode", selection: $viewMode) {
                     ForEach(ResultViewMode.allCases) { mode in

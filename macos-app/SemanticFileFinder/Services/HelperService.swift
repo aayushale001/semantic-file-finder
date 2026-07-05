@@ -145,11 +145,11 @@ actor HelperService {
     }
 
     func getStatus() async throws -> HelperStatus {
-        try await request("status", timeout: Self.localTimeout, as: HelperStatus.self)
+        try await runOneShot(["status"], as: HelperStatus.self)
     }
 
     func listFiles() async throws -> [IndexedFile] {
-        let response = try await request("list", timeout: Self.localTimeout, as: ListFilesResponse.self)
+        let response = try await runOneShot(["list"], as: ListFilesResponse.self)
         if response.status != "success" {
             throw HelperError.helperReturnedError(response.message ?? "Listing files failed")
         }
@@ -157,7 +157,7 @@ actor HelperService {
     }
 
     func getModelInfo() async throws -> ModelInfo {
-        try await request("model-info", timeout: Self.localTimeout, as: ModelInfo.self)
+        try await runOneShot(["model-info"], as: ModelInfo.self)
     }
 
     /// Drop every indexed file under `path` (used when a watched folder is removed).
@@ -229,6 +229,18 @@ actor HelperService {
 
         enum CodingKeys: String, CodingKey {
             case id, type, message
+            case errorCode = "error_code"
+        }
+    }
+
+    /// One-shot CLI error payload: `{"status":"error","message":...}`.
+    private struct ProcessErrorEnvelope: Decodable {
+        let status: String?
+        let message: String?
+        let errorCode: String?
+
+        enum CodingKeys: String, CodingKey {
+            case status, message
             case errorCode = "error_code"
         }
     }
@@ -414,6 +426,40 @@ actor HelperService {
     private func recordStderr(_ line: String) {
         stderrTail.append(line)
         if stderrTail.count > 20 { stderrTail.removeFirst(stderrTail.count - 20) }
+    }
+
+    // MARK: - One-shot local subprocesses
+
+    /// Run a short helper CLI command in its own process. Startup/home commands
+    /// use this path so the indexed-files gallery is never blocked by a stale
+    /// persistent server.
+    private func runOneShot<T: Decodable>(_ args: [String], as type: T.Type) async throws -> T {
+        let (process, outPipe, errPipe) = try makeProcess(args)
+        try launch(process)
+
+        async let stdoutData = readToEnd(outPipe.fileHandleForReading)
+        async let stderrData = readToEnd(errPipe.fileHandleForReading)
+        let out = await stdoutData
+        let err = await stderrData
+        process.waitUntilExit()
+
+        if out.isEmpty {
+            let errText = String(data: err, encoding: .utf8) ?? ""
+            let detail = errText.isEmpty ? "no output (exit code \(process.terminationStatus))" : errText
+            throw HelperError.processFailed(detail)
+        }
+
+        if let env = try? JSONDecoder().decode(ProcessErrorEnvelope.self, from: out),
+           env.status == "error" {
+            throw Self.mapError(message: env.message, errorCode: env.errorCode)
+        }
+
+        do {
+            return try JSONDecoder().decode(T.self, from: out)
+        } catch {
+            let text = String(data: out, encoding: .utf8) ?? "<non-utf8 output>"
+            throw HelperError.decodingFailed("\(error.localizedDescription)\nOutput: \(text)")
+        }
     }
 
     // MARK: - One-shot index subprocess
