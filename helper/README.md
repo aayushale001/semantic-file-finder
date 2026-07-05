@@ -23,6 +23,7 @@ python main.py status
 python main.py remove "/path/to/folder"
 python main.py reset
 python main.py model-info
+python main.py check-key
 python main.py serve
 ```
 
@@ -35,7 +36,8 @@ python main.py serve
 | `status` | `{total_chunks, total_files, db_path}` |
 | `remove` | `{removed_files}` (drops every indexed file under the folder) |
 | `reset` | `{message}` (drops the table + index metadata) |
-| `model-info` | `{embedding_provider, embedding_model, embedding_dimensions, text_only_mode}` |
+| `model-info` | `{embedding_provider, embedding_model, embedding_dimensions, text_only_mode, has_api_key}` |
+| `check-key` | validates the configured Gemini key with a lightweight `models.list` metadata call (`error_code`: `no_api_key` / `invalid_api_key`) |
 | `serve` | persistent JSON-lines server (see below) |
 
 `index` skips files whose path + mtime + size are unchanged unless `--force` is
@@ -62,7 +64,7 @@ Each response line carries the request's `id` and a `type` — `result`, `error`
 `"progress": true` is passed). The server prints `{"type": "ready"}` on startup,
 answers requests serially, reuses the CLI's exact payload shapes, and exits
 cleanly on stdin EOF. Commands: `ping`, `search`, `local-search`, `index`,
-`list`, `status`, `model-info`, `remove`, `reset`.
+`list`, `status`, `model-info`, `check-key`, `remove`, `reset`.
 
 **Media (`gemini-embedding-2`).** Text/docs/code are extracted and chunked; images,
 audio, and video are embedded directly — no text extraction — into the *same*

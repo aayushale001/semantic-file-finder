@@ -113,6 +113,11 @@ struct HelpView: View {
                     title: "Offline falls back to local search",
                     detail: "If Gemini cannot be reached, searches use local filename, path, and indexed text matches. Indexing and semantic search resume when internet is back."
                 )
+                HelpFact(
+                    systemImage: "key.fill",
+                    title: "Your key, your quota",
+                    detail: "The app runs on your personal Gemini API key, stored securely in the macOS Keychain. Usage counts against your own Google project quota/billing, and your files are shared with no one but Google."
+                )
             }
         }
     }

@@ -109,13 +109,39 @@ def is_network_error(exc: Exception) -> bool:
     return any(marker in text for marker in network_markers)
 
 
+def is_invalid_key_error(exc: Exception) -> bool:
+    """True when `exc` looks like a rejected / expired Gemini API key."""
+    text = str(exc).lower()
+    return any(marker in text for marker in (
+        "api key not valid",
+        "api_key_invalid",
+        "api key expired",
+        "invalid api key",
+    ))
+
+
+def verify_api_key() -> None:
+    """Validate the configured API key with a models.list call.
+
+    Listing models is a lightweight metadata endpoint, so the app's
+    "Save & Test" can verify a pasted key without embedding files or running a
+    semantic query.
+    Raises if no key is configured, the key is rejected, or Google is
+    unreachable; deliberately no retries so validation fails fast.
+    """
+    client = _get_client()
+    pager = client.models.list(config={"page_size": 1})
+    next(iter(pager), None)   # force the first page request
+
+
 def _get_client():
     """Lazily build the genai client so offline commands work without a key."""
     global _client
     if _client is None:
         if not config.GEMINI_API_KEY:
             raise RuntimeError(
-                "GEMINI_API_KEY is not set. Add it to your .env or environment."
+                "No Gemini API key is configured. Add your key in the app's "
+                "Settings, or set GEMINI_API_KEY in .env for CLI use."
             )
         from google import genai
         from google.genai import types

@@ -117,6 +117,7 @@ struct ModelInfo: Codable {
     let embeddingModel: String?
     let embeddingDimensions: Int?
     let textOnlyMode: Bool?
+    let hasApiKey: Bool?          // any source: Keychain-injected env or .env
     let message: String?
 
     enum CodingKeys: String, CodingKey {
@@ -125,6 +126,7 @@ struct ModelInfo: Codable {
         case embeddingModel = "embedding_model"
         case embeddingDimensions = "embedding_dimensions"
         case textOnlyMode = "text_only_mode"
+        case hasApiKey = "has_api_key"
         case message
     }
 }

@@ -82,16 +82,20 @@ Python wheels install prebuilt.
 
 ```bash
 ./setup.sh                 # creates .venv and installs helper/requirements.txt
-cp .env.example .env       # then edit .env and set GEMINI_API_KEY
 ```
 
-Get a key from Google AI Studio and put it in `.env`:
+**API key — bring your own.** The app runs on *your* Gemini API key, so usage
+counts against your own Google project quota/billing, not this open-source
+project. Google offers a Gemini API free tier for getting started. On first
+launch the app walks you through it: create or copy a key at
+[Google AI Studio](https://aistudio.google.com/apikey), paste it into the app's
+Settings, and **Save & Test** validates it with a lightweight `models.list`
+metadata call and stores it in the **macOS Keychain** — never in a plaintext
+file.
 
-```
-GEMINI_API_KEY=your_real_key
-```
-
-The API key is read from the environment / `.env` only — it is never hardcoded.
+For CLI use or development you can instead put the key in a `.env` at the repo
+root (`cp .env.example .env`, then set `GEMINI_API_KEY`). A key saved in the
+app takes precedence over `.env`.
 
 ## Embedding model
 
@@ -199,8 +203,10 @@ internet access because Gemini creates embeddings for your files and queries.
 
 ## Troubleshooting
 
-- **`GEMINI_API_KEY is not set`** — add it to `.env` (needed for `index`/`search`,
-  not for `status`/`model-info`/`reset`).
+- **"No Gemini API key is configured"** — paste your key in the app's Settings
+  (gear icon), or add it to `.env` for CLI use (needed for `index`/`search`,
+  not for `status`/`model-info`/`reset`). Validate with
+  `python helper/main.py check-key`.
 - **Model "not found" from the API** — confirm your key has access to
   `gemini-embedding-2`, or use the text-only fallback (`gemini-embedding-001` +
   `TEXT_ONLY_MODE=true`), then `reset` and re-index.
@@ -223,7 +229,6 @@ filename/text fallback. Still planned:
 - More granular per-file incremental indexing for very large watched folders.
 - Optional hybrid keyword + semantic scoring for online search.
 - A distributable, sandboxed, signed/notarized macOS app bundle.
-- Keychain-backed API key setup for packaged releases.
 
 ## License
 

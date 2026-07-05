@@ -3,6 +3,7 @@ import AppKit
 
 private enum ContentSheet: String, Identifiable {
     case help
+    case settings
 
     var id: String { rawValue }
 }
@@ -129,6 +130,40 @@ final class AppViewModel: ObservableObject {
         isLoadingFiles = true
         defer { isLoadingFiles = false }
         indexedFiles = (try? await helper.listFiles()) ?? indexedFiles
+    }
+
+    // MARK: Gemini API key (bring-your-own-key)
+
+    /// A key saved through the app's Settings (as opposed to a .env dev setup).
+    var hasStoredAPIKey: Bool { KeychainStore.readAPIKey() != nil }
+
+    /// Save `key` to the Keychain, restart the helper so it picks the key up,
+    /// and validate it with a lightweight metadata call. Returns nil on success,
+    /// otherwise a user-readable error; failed validation removes the temporary
+    /// Keychain value so a rejected key is not kept.
+    func saveAPIKey(_ key: String) async -> String? {
+        let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "Paste your Gemini API key first." }
+        guard KeychainStore.saveAPIKey(trimmed) else {
+            return "Could not save the key to the macOS Keychain."
+        }
+        await helper.restartServer()
+        do {
+            try await helper.checkAPIKey()
+        } catch {
+            KeychainStore.deleteAPIKey()
+            await helper.restartServer()
+            modelInfo = try? await helper.getModelInfo()
+            return error.localizedDescription
+        }
+        modelInfo = try? await helper.getModelInfo()
+        return nil
+    }
+
+    func removeAPIKey() async {
+        KeychainStore.deleteAPIKey()
+        await helper.restartServer()
+        modelInfo = try? await helper.getModelInfo()
     }
 
     // MARK: Watched folders
@@ -339,11 +374,19 @@ struct ContentView: View {
             .animation(.smooth(duration: 0.25), value: viewModel.isIndexing)
         }
         .frame(minWidth: 760, minHeight: 580)
-        .task { await viewModel.loadInitialState() }
+        .task {
+            await viewModel.loadInitialState()
+            // First run: no key from any source — walk the user through setup.
+            if viewModel.modelInfo?.hasApiKey == false {
+                presentedSheet = .settings
+            }
+        }
         .sheet(item: $presentedSheet) { destination in
             switch destination {
             case .help:
                 HelpView()
+            case .settings:
+                SettingsView(viewModel: viewModel)
             }
         }
         .alert(
@@ -438,6 +481,13 @@ struct ContentView: View {
                 .labelsHidden()
                 .help("Show results as a list or icons")
             }
+
+            Button {
+                presentedSheet = .settings
+            } label: {
+                Label("Settings", systemImage: "gearshape")
+            }
+            .help("Set up your Gemini API key")
 
             Button {
                 presentedSheet = .help

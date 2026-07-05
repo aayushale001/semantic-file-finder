@@ -79,6 +79,9 @@ actor HelperService {
     /// ceiling sits above the embed layer's worst-case retry schedule.
     private static let localTimeout: TimeInterval = 30
     private static let remoteTimeout: TimeInterval = 360
+    /// Above the helper's 45 s HTTP timeout, so a slow key check surfaces the
+    /// real network error instead of a generic "timed out".
+    private static let keyCheckTimeout: TimeInterval = 60
 
     // MARK: - Public API
 
@@ -179,6 +182,22 @@ actor HelperService {
         }
     }
 
+    /// Validate the configured Gemini key with a models.list metadata call.
+    /// Throws with a user-readable message when the key is missing or rejected.
+    func checkAPIKey() async throws {
+        let response = try await request("check-key", timeout: Self.keyCheckTimeout, as: HelperStatus.self)
+        if response.status != "success" {
+            throw HelperError.helperReturnedError(response.message ?? "API key check failed")
+        }
+    }
+
+    /// Tear down the persistent server so the next request spawns a fresh one.
+    /// Used after the API key changes: the running server captured the old
+    /// environment and caches its Gemini client, so it must be recycled.
+    func restartServer() {
+        tearDownServer(failingPendingWith: .processFailed("the helper restarted to apply new settings"))
+    }
+
     /// Map a helper error payload to a typed `HelperError`, distinguishing the
     /// quota and offline cases so the app can react to each specifically.
     static func mapError(message: String?, errorCode: String?) -> HelperError {
@@ -187,6 +206,13 @@ actor HelperService {
         }
         if errorCode == "network_unavailable" {
             return .networkUnavailable(message ?? "Gemini is unreachable")
+        }
+        if errorCode == "invalid_api_key" {
+            return .helperReturnedError(
+                "That API key was rejected by Google. Double-check it in Google AI Studio and paste it again.")
+        }
+        if errorCode == "no_api_key" {
+            return .helperReturnedError("No Gemini API key is configured yet.")
         }
         return .helperReturnedError(message ?? "The helper reported an error.")
     }
@@ -281,6 +307,7 @@ actor HelperService {
         process.executableURL = URL(fileURLWithPath: python)
         process.arguments = [mainScript, "serve"]
         process.currentDirectoryURL = URL(fileURLWithPath: helperDirectory)
+        process.environment = helperEnvironment()
         let inPipe = Pipe()
         let outPipe = Pipe()
         let errPipe = Pipe()
@@ -458,6 +485,7 @@ actor HelperService {
         process.executableURL = URL(fileURLWithPath: python)
         process.arguments = [mainScript] + args
         process.currentDirectoryURL = URL(fileURLWithPath: helperDirectory)
+        process.environment = helperEnvironment()
 
         let outPipe = Pipe()
         let errPipe = Pipe()
@@ -484,6 +512,19 @@ actor HelperService {
                 continuation.resume(returning: data)
             }
         }
+    }
+
+    /// Environment for helper processes: the parent's, plus the Keychain API
+    /// key when the user has stored one. The Keychain key deliberately wins
+    /// over any shell/.env value — it's the explicit in-app setting. Without a
+    /// stored key, nothing is injected and the helper's .env fallback applies
+    /// (the frictionless developer path).
+    private func helperEnvironment() -> [String: String] {
+        var environment = ProcessInfo.processInfo.environment
+        if let key = KeychainStore.readAPIKey() {
+            environment["GEMINI_API_KEY"] = key
+        }
+        return environment
     }
 
     /// Prefer the project virtualenv, then a system python3.

@@ -59,7 +59,28 @@ def _model_info_payload() -> dict:
         "embedding_model": config.resolve_embedding_model(),
         "embedding_dimensions": config.EMBEDDING_DIMENSIONS,
         "text_only_mode": config.TEXT_ONLY_MODE,
+        # Lets the app decide whether to show first-run key setup. True for a
+        # key from any source (the app's Keychain-injected env var or a .env).
+        "has_api_key": bool(config.GEMINI_API_KEY),
     }
+
+
+def _check_key_payload() -> dict:
+    """Validate the configured Gemini key with a models.list metadata call."""
+    if not config.GEMINI_API_KEY:
+        return {
+            "status": "error",
+            "message": "No Gemini API key is configured.",
+            "error_code": "no_api_key",
+        }
+    try:
+        embeddings.verify_api_key()
+    except Exception as exc:  # noqa: BLE001 - classified below
+        payload = _error_payload(exc)   # tags quota / offline failures
+        if "error_code" not in payload and embeddings.is_invalid_key_error(exc):
+            payload["error_code"] = "invalid_api_key"
+        return payload
+    return {"status": "success", "message": "API key is valid"}
 
 
 def _now_iso() -> str:
@@ -455,6 +476,15 @@ def model_info() -> None:
         raise typer.Exit(code=1)
 
 
+@app.command(name="check-key")
+def check_key() -> None:
+    """Validate the configured Gemini API key."""
+    payload = _check_key_payload()
+    _emit(payload)
+    if payload.get("status") != "success":
+        raise typer.Exit(code=1)
+
+
 def _serve_dispatch(cmd: str, args: dict, emit_progress: Callable[[dict], None]) -> dict:
     """Execute one server request and return its JSON-able result payload.
 
@@ -491,6 +521,8 @@ def _serve_dispatch(cmd: str, args: dict, emit_progress: Callable[[dict], None])
         return {"status": "success", **vector_store.get_status()}
     if cmd == "model-info":
         return _model_info_payload()
+    if cmd == "check-key":
+        return _check_key_payload()
     if cmd == "remove":
         folder = args.get("folder")
         if not folder:
