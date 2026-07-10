@@ -1,4 +1,4 @@
-"""Semantic File Finder helper CLI.
+"""Fosvera helper CLI.
 
 Commands: index, search, status, reset. Each command prints one JSON object to
 stdout (consumed by the Swift app); the lone exception is `index --progress`,
@@ -10,7 +10,9 @@ from __future__ import annotations
 import concurrent.futures
 import json
 import logging
+import os
 import sys
+import threading
 from datetime import datetime, timezone
 from typing import Callable, List, Optional
 
@@ -23,10 +25,10 @@ import scanner
 import vector_store
 from chunker import chunk_document
 from extractors import extract_file
-from models import ChunkRecord, ScannedFile
+from models import ChunkRecord, ScannedFile, TextUnit
 from search import run_local_search, run_search
 
-app = typer.Typer(add_completion=False, help="Semantic File Finder helper CLI")
+app = typer.Typer(add_completion=False, help="Fosvera helper CLI")
 log = logging.getLogger("helper")
 
 
@@ -100,6 +102,101 @@ def _media_model_supported() -> bool:
 _MEDIA_KIND = {"image": "Image", "audio": "Audio", "video": "Video"}
 
 
+class FileBudgetExceeded(RuntimeError):
+    """Raised when one file would exceed the helper's indexing work budget."""
+
+
+def _bytes_label(value: int) -> str:
+    for unit in ("B", "KiB", "MiB", "GiB"):
+        if value < 1024 or unit == "GiB":
+            return f"{value:.1f} {unit}" if unit != "B" else f"{value} B"
+        value = value / 1024
+    return f"{value} B"
+
+
+def _file_size_limit(modality: str) -> int:
+    if modality == "text":
+        return config.MAX_TEXT_FILE_BYTES
+    if modality == "code":
+        return config.MAX_CODE_FILE_BYTES
+    if modality == "pdf":
+        return config.MAX_PDF_FILE_BYTES
+    if modality == "docx":
+        return config.MAX_DOCX_FILE_BYTES
+    if modality in config.MEDIA_MODALITIES:
+        return config.MAX_MEDIA_FILE_BYTES
+    return 0
+
+
+def _enforce_file_size_budget(f: ScannedFile) -> None:
+    limit = _file_size_limit(f.modality)
+    if limit > 0 and f.file_size_bytes > limit:
+        raise FileBudgetExceeded(
+            f"{f.modality} file is {_bytes_label(f.file_size_bytes)}, "
+            f"over the per-file limit of {_bytes_label(limit)}"
+        )
+
+
+def _enforce_text_budget(f: ScannedFile, units: list, chunks: list) -> None:
+    extracted_chars = sum(len(unit.text) for unit in units)
+    if extracted_chars > config.MAX_EXTRACTED_CHARS_PER_FILE:
+        raise FileBudgetExceeded(
+            f"extracted {extracted_chars:,} characters, over the per-file limit "
+            f"of {config.MAX_EXTRACTED_CHARS_PER_FILE:,}"
+        )
+    if len(chunks) > config.MAX_CHUNKS_PER_FILE:
+        raise FileBudgetExceeded(
+            f"would create {len(chunks):,} chunks, over the per-file limit "
+            f"of {config.MAX_CHUNKS_PER_FILE:,}"
+        )
+
+
+def _enforce_media_segment_budget(f: ScannedFile, segments: list["media.MediaSegment"]) -> None:
+    if len(segments) > config.MAX_CHUNKS_PER_FILE:
+        raise FileBudgetExceeded(
+            f"would create {len(segments):,} media segments, over the per-file "
+            f"limit of {config.MAX_CHUNKS_PER_FILE:,}"
+        )
+    for segment in segments:
+        try:
+            segment_size = os.path.getsize(segment.path)
+        except OSError as exc:
+            raise FileBudgetExceeded(f"could not stat media segment: {exc}") from exc
+        if segment_size > config.MAX_MEDIA_SEGMENT_BYTES:
+            raise FileBudgetExceeded(
+                f"media segment is {_bytes_label(segment_size)}, over the per-segment "
+                f"upload limit of {_bytes_label(config.MAX_MEDIA_SEGMENT_BYTES)}"
+            )
+
+
+def _extract_file_with_timeout(f: ScannedFile) -> List[TextUnit]:
+    """Run extraction on a watchdog thread so one pathological file (e.g. a PDF
+    that sends the parser into an effectively infinite loop) cannot hang
+    indexing forever. Size/page budgets bound memory, not CPU time.
+
+    The worker is a daemon thread: if it is truly stuck it is abandoned (it
+    dies with the process) and the file is recorded as an extraction error.
+    """
+    outcome: dict = {}
+
+    def _worker() -> None:
+        try:
+            outcome["units"] = extract_file(f.file_path, f.modality)
+        except BaseException as exc:  # noqa: BLE001 - re-raised on the main thread
+            outcome["error"] = exc
+
+    worker = threading.Thread(target=_worker, name=f"extract:{f.file_name}", daemon=True)
+    worker.start()
+    worker.join(config.EXTRACT_TIMEOUT_SECONDS)
+    if worker.is_alive():
+        raise TimeoutError(
+            f"extraction did not finish within {config.EXTRACT_TIMEOUT_SECONDS}s"
+        )
+    if "error" in outcome:
+        raise outcome["error"]
+    return outcome.get("units", [])
+
+
 def _media_preview(modality: str, file_name: str, segment: "media.MediaSegment") -> str:
     """Human-readable label stored as the preview/full_text for a media segment."""
     kind = _MEDIA_KIND.get(modality, modality.title())
@@ -119,6 +216,7 @@ def _index_media_file(
     """
     indexed_at = _now_iso()
     with media.segmented(f.file_path, f.modality) as segments:
+        _enforce_media_segment_budget(f, segments)
         seg_total = len(segments)
         if seg_total == 0:
             return []
@@ -222,6 +320,13 @@ def run_index(
                     "indexed_chunks": indexed_chunks,
                 })
 
+            try:
+                _enforce_file_size_budget(f)
+            except FileBudgetExceeded as exc:
+                skipped_files += 1
+                errors.append(f"budget:{f.file_name}: {exc}")
+                continue
+
             if f.modality in config.MEDIA_MODALITIES:
                 # ---- media: embed sampled segments (image / audio / video) ----
                 if not _media_model_supported():
@@ -248,6 +353,10 @@ def run_index(
 
                 try:
                     records = _index_media_file(f, on_segment=_on_segment)
+                except FileBudgetExceeded as exc:
+                    skipped_files += 1
+                    errors.append(f"budget:{f.file_name}: {exc}")
+                    continue
                 except (embeddings.QuotaExceededError, embeddings.NetworkUnavailableError):
                     raise  # API-wide failures affect every file — abort, don't churn
                 except Exception as exc:  # noqa: BLE001 - one bad file must not kill the job
@@ -261,7 +370,7 @@ def run_index(
             else:
                 # ---- text: extract -> chunk -> embed ----
                 try:
-                    units = extract_file(f.file_path, f.modality)
+                    units = _extract_file_with_timeout(f)
                 except Exception as exc:  # noqa: BLE001 - one bad file must not kill the job
                     log.exception("Extraction failed for %s", f.file_path)
                     errors.append(f"extract:{f.file_name}: {exc}")
@@ -271,6 +380,13 @@ def run_index(
                 if not chunks:
                     skipped_files += 1
                     errors.append(f"empty:{f.file_name}: no extractable text")
+                    continue
+
+                try:
+                    _enforce_text_budget(f, units, chunks)
+                except FileBudgetExceeded as exc:
+                    skipped_files += 1
+                    errors.append(f"budget:{f.file_name}: {exc}")
                     continue
 
                 try:

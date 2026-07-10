@@ -120,7 +120,7 @@ struct ModelInfo: Codable {
     let embeddingModel: String?
     let embeddingDimensions: Int?
     let textOnlyMode: Bool?
-    let hasApiKey: Bool?          // any source: Keychain-injected env or .env
+    let hasApiKey: Bool?          // Keychain-injected env, or explicit developer override
     let message: String?
 
     enum CodingKeys: String, CodingKey {

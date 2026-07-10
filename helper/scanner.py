@@ -39,6 +39,15 @@ def compute_chunk_id(file_id: str, chunk_index: int, content: str) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()
 
 
+def _is_relative_to(path: Path, root: Path) -> bool:
+    """True when `path` is inside `root` after both are resolved."""
+    try:
+        path.relative_to(root)
+        return True
+    except ValueError:
+        return False
+
+
 def scan_folder(folder: str) -> List[ScannedFile]:
     """Walk `folder` and return the supported files (hidden/system dirs skipped)."""
     root = Path(folder).expanduser().resolve()
@@ -49,10 +58,15 @@ def scan_folder(folder: str) -> List[ScannedFile]:
 
     found: List[ScannedFile] = []
     for dirpath, dirnames, filenames in os.walk(root):
-        # Prune hidden + ignored directories in place so os.walk never enters them.
+        # Prune hidden, ignored, and symlinked directories in place so os.walk
+        # never enters a path that can escape the user-selected root.
         dirnames[:] = [
             d for d in dirnames
-            if not d.startswith(".") and d not in config.IGNORED_DIRS
+            if (
+                not d.startswith(".")
+                and d not in config.IGNORED_DIRS
+                and not (Path(dirpath) / d).is_symlink()
+            )
         ]
         for name in filenames:
             if name.startswith("."):  # skip hidden files (.DS_Store, dotfiles)
@@ -64,27 +78,35 @@ def scan_folder(folder: str) -> List[ScannedFile]:
 
             full = Path(dirpath) / name
             try:
-                st = full.stat()
+                if full.is_symlink():
+                    log.warning("Skipping symlinked file outside scan policy: %s", full)
+                    continue
+                resolved = full.resolve(strict=True)
+                if not _is_relative_to(resolved, root):
+                    log.warning("Skipping file outside scan root: %s -> %s", full, resolved)
+                    continue
+                st = resolved.stat()
             except OSError as exc:
                 log.warning("Could not stat %s: %s", full, exc)
                 continue
 
             modified_at = _iso(st.st_mtime)
-            file_id = compute_file_id(str(full), modified_at, st.st_size)
+            file_path = str(resolved)
+            file_id = compute_file_id(file_path, modified_at, st.st_size)
             # file_hash is metadata only (change detection uses file_id), so we
             # skip re-reading multi-GB media on every scan.
             if st.st_size <= config.MEDIA_HASH_MAX_BYTES:
                 try:
-                    file_hash = _hash_file(full)
+                    file_hash = _hash_file(resolved)
                 except OSError as exc:
-                    log.warning("Could not hash %s: %s", full, exc)
+                    log.warning("Could not hash %s: %s", resolved, exc)
                     file_hash = file_id
             else:
                 file_hash = file_id
 
             found.append(ScannedFile(
                 file_id=file_id,
-                file_path=str(full),
+                file_path=file_path,
                 file_name=name,
                 file_extension=ext,
                 modality=modality,

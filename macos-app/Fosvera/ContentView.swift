@@ -16,6 +16,14 @@ struct AppAlert: Identifiable {
     let message: String
 }
 
+/// Outcome of saving a Keychain API key. A temporary Gemini failure must be
+/// visibly different from an invalid key: the former is still safely saved.
+enum APIKeySaveResult {
+    case verified
+    case savedButUnverified(String)
+    case failed(String)
+}
+
 /// Owns all UI state and bridges the SwiftUI views to the Python helper.
 @MainActor
 final class AppViewModel: ObservableObject {
@@ -37,6 +45,9 @@ final class AppViewModel: ObservableObject {
     @Published var fileListError: String?
     @Published var searchNotice: String?
     @Published var activeAlert: AppAlert?
+    /// Whether this app build can read a saved Gemini key without showing
+    /// Keychain permission UI.
+    @Published var hasStoredAPIKey = KeychainStore.hasAPIKey()
     /// A transient "auto-syncing changes…" hint while the watcher re-indexes.
     @Published var isAutoSyncing = false
 
@@ -153,9 +164,6 @@ final class AppViewModel: ObservableObject {
 
     // MARK: Gemini API key (bring-your-own-key)
 
-    /// A key saved through the app's Settings (as opposed to a .env dev setup).
-    var hasStoredAPIKey: Bool { KeychainStore.readAPIKey() != nil }
-
     /// True when there is already something useful to show on the home screen.
     /// This keeps existing offline/indexed-file browsing from being covered by
     /// first-run key setup.
@@ -164,30 +172,45 @@ final class AppViewModel: ObservableObject {
     }
 
     /// Save `key` to the Keychain, restart the helper so it picks the key up,
-    /// and validate it with a lightweight metadata call. Returns nil on success,
-    /// otherwise a user-readable error; failed validation removes the temporary
-    /// Keychain value so a rejected key is not kept.
-    func saveAPIKey(_ key: String) async -> String? {
+    /// and validate it with a lightweight metadata call. Only an explicit
+    /// invalid-key response removes the saved key; offline and quota failures
+    /// leave it safely stored for a later retry.
+    func saveAPIKey(_ key: String) async -> APIKeySaveResult {
         let trimmed = key.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return "Paste your Gemini API key first." }
+        guard !trimmed.isEmpty else { return .failed("Paste your Gemini API key first.") }
         guard KeychainStore.saveAPIKey(trimmed) else {
-            return "Could not save the key to the macOS Keychain."
+            hasStoredAPIKey = KeychainStore.hasAPIKey()
+            return .failed("Could not save the key to the macOS Keychain.")
         }
+        hasStoredAPIKey = true
         await helper.restartServer()
         do {
             try await helper.checkAPIKey()
         } catch {
-            KeychainStore.deleteAPIKey()
-            await helper.restartServer()
+            if let helperError = error as? HelperError, helperError.isInvalidAPIKey {
+                let removed = KeychainStore.deleteAPIKey()
+                hasStoredAPIKey = KeychainStore.hasAPIKey()
+                await helper.restartServer()
+                modelInfo = try? await helper.getModelInfo()
+                if removed {
+                    return .failed(helperError.localizedDescription)
+                }
+                return .failed(
+                    "\(helperError.localizedDescription) The rejected key could not be removed from Keychain; use Remove Key before trying another one."
+                )
+            }
             modelInfo = try? await helper.getModelInfo()
-            return error.localizedDescription
+            return .savedButUnverified(
+                "Key saved, but Gemini could not verify it right now. It will be used when Gemini is reachable. \(error.localizedDescription)"
+            )
         }
         modelInfo = try? await helper.getModelInfo()
-        return nil
+        return .verified
     }
 
     func removeAPIKey() async {
-        KeychainStore.deleteAPIKey()
+        _ = KeychainStore.deleteAPIKey()
+        hasStoredAPIKey = KeychainStore.hasAPIKey()
         await helper.restartServer()
         modelInfo = try? await helper.getModelInfo()
     }
@@ -235,8 +258,19 @@ final class AppViewModel: ObservableObject {
     }
 
     private func enqueueIndex(_ jobs: [IndexJob]) {
-        for job in jobs where !pendingJobs.contains(where: { $0.path == job.path }) {
-            pendingJobs.append(job)
+        for job in jobs {
+            if let existing = pendingJobs.firstIndex(where: { $0.path == job.path }) {
+                // Merge with the queued job for this path so a forced or
+                // user-initiated request is never dropped by a background sync
+                // that happened to be queued first.
+                pendingJobs[existing] = IndexJob(
+                    path: job.path,
+                    force: pendingJobs[existing].force || job.force,
+                    background: pendingJobs[existing].background && job.background
+                )
+            } else {
+                pendingJobs.append(job)
+            }
         }
         Task { await drainIndexQueue() }
     }
@@ -252,6 +286,15 @@ final class AppViewModel: ObservableObject {
             isIndexing = false
             isAutoSyncing = false
             indexProgress = nil
+            // A watcher event can arrive while the final status/file refreshes
+            // are suspended. Its initial drain task sees `indexingActive` and
+            // returns, so explicitly schedule a new pass after releasing the
+            // gate rather than leaving that work stranded.
+            if !pendingJobs.isEmpty {
+                Task { @MainActor [weak self] in
+                    await self?.drainIndexQueue()
+                }
+            }
         }
         while !pendingJobs.isEmpty {
             let job = pendingJobs.removeFirst()
@@ -379,7 +422,7 @@ struct ContentView: View {
                     )
                 }
             }
-            .navigationTitle("Semantic File Finder")
+            .navigationTitle("Fosvera")
             .navigationSubtitle(subtitle)
             .toolbar { toolbarContent }
             .onChange(of: viewModel.scope) {
@@ -542,7 +585,7 @@ struct ContentView: View {
             } label: {
                 Label("Help", systemImage: "questionmark.circle")
             }
-            .help("Learn how Semantic File Finder works")
+            .help("Learn how Fosvera works")
 
             Menu {
                 Button {

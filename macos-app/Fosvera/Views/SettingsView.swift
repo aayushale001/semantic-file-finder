@@ -11,6 +11,7 @@ struct SettingsView: View {
     @State private var apiKey = ""
     @State private var isChecking = false
     @State private var errorMessage: String?
+    @State private var warningMessage: String?
     @State private var verified = false
 
     var body: some View {
@@ -30,7 +31,7 @@ struct SettingsView: View {
                 }
             }
 
-            Text("Semantic File Finder talks directly to Google's Gemini using a key that belongs to you, so usage counts against your own Google project quota/billing and your files are shared with no one but Google. Google offers a Gemini API free tier for getting started.")
+            Text("Fosvera talks directly to Google's Gemini using a key that belongs to you, so usage counts against your own Google project quota/billing and your files are shared with no one but Google. Google offers a Gemini API free tier for getting started.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -41,7 +42,7 @@ struct SettingsView: View {
             .font(.callout)
 
             HStack(spacing: 8) {
-                SecureField("Paste your API key (AIza…)", text: $apiKey)
+                SecureField("Paste your API key", text: $apiKey)
                     .textFieldStyle(.roundedBorder)
                     .onSubmit { saveAndTest() }
                 Button(action: saveAndTest) {
@@ -63,12 +64,16 @@ struct SettingsView: View {
                     Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
                         .font(.callout)
                         .foregroundStyle(.red)
+                } else if let warningMessage {
+                    Label(warningMessage, systemImage: "exclamationmark.circle.fill")
+                        .font(.callout)
+                        .foregroundStyle(.orange)
                 } else if verified {
                     Label("Key verified and saved to your Keychain.", systemImage: "checkmark.circle.fill")
                         .font(.callout)
                         .foregroundStyle(.green)
                 } else if usingDevKey {
-                    Label("Currently using the key from .env (developer setup). A key saved here takes precedence.", systemImage: "info.circle")
+                    Label("Currently using a developer environment key. Save a key here to store it in Keychain and use normal app behavior.", systemImage: "info.circle")
                         .font(.callout)
                         .foregroundStyle(.secondary)
                 }
@@ -84,6 +89,7 @@ struct SettingsView: View {
                             await viewModel.removeAPIKey()
                             verified = false
                             errorMessage = nil
+                            warningMessage = nil
                         }
                     }
                     .disabled(isChecking)
@@ -99,7 +105,8 @@ struct SettingsView: View {
         .frame(width: 480)
     }
 
-    /// True when a key works but none is in the Keychain (i.e. a .env dev setup).
+    /// True when a key works but none is in the Keychain, which can only happen
+    /// when the developer explicitly launches with `SFF_ALLOW_APP_ENV_API_KEY=1`.
     private var usingDevKey: Bool {
         viewModel.modelInfo?.hasApiKey == true && !viewModel.hasStoredAPIKey
     }
@@ -107,16 +114,21 @@ struct SettingsView: View {
     private func saveAndTest() {
         guard !isChecking else { return }
         errorMessage = nil
+        warningMessage = nil
         verified = false
         isChecking = true
         Task {
-            let failure = await viewModel.saveAPIKey(apiKey)
+            let result = await viewModel.saveAPIKey(apiKey)
             isChecking = false
-            if let failure {
-                errorMessage = failure
-            } else {
+            switch result {
+            case .verified:
                 verified = true
                 apiKey = ""
+            case .savedButUnverified(let warning):
+                warningMessage = warning
+                apiKey = ""
+            case .failed(let failure):
+                errorMessage = failure
             }
         }
     }

@@ -1,8 +1,12 @@
 # Secrets
-.env
+.env*
+**/.env*
+!.env.example
+!**/.env.example
 
 # Python
 .venv/
+.venv-release/
 __pycache__/
 *.py[cod]
 *.egg-info/
@@ -15,6 +19,14 @@ DerivedData/
 *.xcuserstate
 .swiftpm/
 
+# Release artifacts
+build/
+dist/
+*.dmg
+*.xcarchive
+*.notarization.zip
+SHA256SUMS.txt
+
 # macOS
 .DS_Store
 
@@ -23,4 +35,4 @@ DerivedData/
 .vscode/
 .idea/
 
-# App data (created at runtime in ~/.semantic_file_finder; never in-repo)
+# Fosvera app data (legacy path retained for existing tester indexes; never in-repo)

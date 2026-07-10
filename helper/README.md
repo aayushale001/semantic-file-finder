@@ -1,6 +1,6 @@
 # Helper CLI
 
-Python helper for the Semantic File Finder. It scans a folder, extracts and chunks
+Python helper for Fosvera. It scans a folder, extracts and chunks
 text, embeds chunks with Gemini Embedding 2, stores them in LanceDB, and answers
 natural-language searches. It also provides a local filename/path/text search
 fallback that does not call Gemini.
@@ -9,7 +9,8 @@ fallback that does not call Gemini.
 
 - **stdout is a single JSON object.** Nothing else is written to stdout.
   (Exception: `index --progress` streams newline-delimited JSON — see below.)
-- Logs go to **stderr** and to `~/.semantic_file_finder/logs/helper.log`.
+- Logs go to **stderr** and to `~/.semantic_file_finder/logs/helper.log` (the
+  stable legacy directory retained for existing tester indexes).
 - Success: `{"status": "success", ...}` · Failure: `{"status": "error", "message": "..."}`.
 
 ## Commands
@@ -74,9 +75,10 @@ vector space, so a text query can match them. To stay bounded on big files,
 clips** under the 180s cap (capped at `MAX_AUDIO_SEGMENTS`) — so a feature-length
 film becomes a few dozen small image embeddings, not dozens of huge uploads. Every
 ffmpeg call and API request has a timeout, indexing reports live per-segment
-progress, and segments over `MEDIA_INLINE_MAX_BYTES` use the Files API. Media needs
-the multimodal model; with the `gemini-embedding-001` text-only fallback, media
-files are skipped (recorded in `errors[]`).
+progress, segments over `MEDIA_INLINE_MAX_BYTES` use the Files API, and segments
+over `MAX_MEDIA_SEGMENT_BYTES` are skipped before upload. Media needs the
+multimodal model; with the `gemini-embedding-001` text-only fallback, media files
+are skipped (recorded in `errors[]`).
 
 **Modality gap & `--scope`.** Text and media occupy different regions of the
 shared space, so for a text query the text documents score higher than images of
@@ -96,7 +98,7 @@ and `resolved_scope` so callers can show what was searched.
 |---|---|
 | `config.py` | env/.env settings, paths, logging, embedding-model validation |
 | `scanner.py` | recursive scan, ignore hidden/system dirs, deterministic IDs/hashes |
-| `extractors/` | `text`, `code`, `pdf` (PyMuPDF, per page), `docx` (python-docx) |
+| `extractors/` | `text`, `code`, `pdf` (pypdf, per page), `docx` (python-docx) |
 | `chunker.py` | char-window chunks (text/pdf/docx) and line-range chunks (code) |
 | `media.py` | split image/audio/video into embeddable segments (ffmpeg via imageio-ffmpeg) |
 | `embeddings.py` | Gemini embedding (text + media) with batching, retries, L2 normalization |
@@ -117,6 +119,13 @@ and `resolved_scope` so callers can show what was searched.
 | `TEXT_ONLY_MODE` | `false` | allow the `gemini-embedding-001` fallback |
 | `CHUNK_SIZE` / `CHUNK_OVERLAP` | `1200` / `200` | text chunking |
 | `CODE_CHUNK_LINES` | `120` | lines per code chunk |
+| `MAX_TEXT_FILE_BYTES` / `MAX_CODE_FILE_BYTES` | `5242880` / `5242880` | max text/code file size indexed |
+| `MAX_PDF_FILE_BYTES` / `MAX_DOCX_FILE_BYTES` | `52428800` / `52428800` | max PDF/DOCX file size indexed |
+| `MAX_EXTRACTED_CHARS_PER_FILE` | `500000` | max extracted text per file before skipping |
+| `MAX_CHUNKS_PER_FILE` | `500` | max text chunks or media segments per file |
+| `MAX_PDF_PAGES` | `250` | max PDF pages extracted per file |
+| `MAX_MEDIA_FILE_BYTES` | `262144000` | max image/audio/video file size indexed |
+| `MAX_MEDIA_SEGMENT_BYTES` | `52428800` | max media segment size uploaded to Gemini |
 | `MAX_VIDEO_FRAMES` | `30` | max still frames sampled per video |
 | `VIDEO_FRAME_INTERVAL_SECONDS` | `10` | target spacing between sampled frames |
 | `AUDIO_SEGMENT_SECONDS` / `MAX_AUDIO_SEGMENTS` | `170` / `30` | audio clip length / max clips per file |
@@ -135,3 +144,7 @@ print(len(scanner.scan_folder('../test_files')), 'files')"
 
 `status`, `reset`, `model-info`, `list`, and `local-search` also work without a
 key. `index` and semantic `search` require `GEMINI_API_KEY` and internet access.
+
+Source/CLI development loads `.env` by default. Frozen PyInstaller helpers do
+not load `.env` by default; set `SFF_LOAD_DOTENV=1` only for explicit developer
+testing.

@@ -6,6 +6,8 @@ enum HelperError: LocalizedError {
     case processFailed(String)
     case decodingFailed(String)
     case helperReturnedError(String)
+    /// Gemini explicitly rejected the supplied API key.
+    case invalidAPIKey
     /// The Gemini API rejected a call for quota / rate-limit reasons (HTTP 429).
     case quotaExceeded(String)
     /// Gemini could not be reached because the device appears offline.
@@ -14,7 +16,11 @@ enum HelperError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .helperNotFound(let path):
-            return "Python helper not found at \(path). Set SEMANTIC_HELPER_DIR or the helperDirectory default."
+#if DEBUG
+            return "Python helper not found at \(path). Set FOSVERA_HELPER_DIR or the helperDirectory default."
+#else
+            return "Bundled helper not found at \(path). Reinstall Fosvera or report a release packaging issue."
+#endif
         case .pythonNotFound:
             return "Could not find a Python interpreter (looked for the project .venv and /usr/bin/python3)."
         case .processFailed(let message):
@@ -23,6 +29,8 @@ enum HelperError: LocalizedError {
             return "Could not read helper output: \(message)"
         case .helperReturnedError(let message):
             return message
+        case .invalidAPIKey:
+            return "That API key was rejected by Google. Double-check it in Google AI Studio and paste it again."
         case .quotaExceeded:
             return "You've reached your Gemini API quota or rate limit. Wait a little and try again, or check your usage and billing limits in Google AI Studio."
         case .networkUnavailable:
@@ -39,6 +47,14 @@ enum HelperError: LocalizedError {
     /// True when Gemini was unreachable because the network appears unavailable.
     var isNetworkUnavailable: Bool {
         if case .networkUnavailable = self { return true }
+        return false
+    }
+
+    /// True only when Gemini explicitly says the supplied API key is invalid.
+    /// Network, quota, and transient helper failures must not be treated as a
+    /// reason to discard a key the user just saved.
+    var isInvalidAPIKey: Bool {
+        if case .invalidAPIKey = self { return true }
         return false
     }
 }
@@ -59,19 +75,52 @@ enum HelperError: LocalizedError {
 /// `open_table` in the server re-reads the latest committed version, so the
 /// index subprocess's writes are always visible here.
 actor HelperService {
-    /// Directory containing `main.py`. Override at runtime with the
-    /// `SEMANTIC_HELPER_DIR` env var or a `helperDirectory` UserDefaults key.
-    static let defaultHelperDirectory =
+    private static let bundledHelperDirectoryName = "helper"
+    private static let bundledHelperExecutableName = "fosvera-helper"
+#if DEBUG
+    private static let legacyDevelopmentHelperDirectory =
         "/Users/aayushale/Desktop/VectorBasedFileSearch/helper"
+#endif
 
+    /// Directory containing either:
+    /// - a release helper executable named `fosvera-helper`, or
+    /// - the source helper's `main.py` for development.
+    ///
+    /// Resolution order:
+    /// 1. Debug only: `FOSVERA_HELPER_DIR` environment override.
+    /// 2. Debug only: `helperDirectory` UserDefaults override.
+    /// 3. A bundled release helper in `Contents/Resources/helper`.
+    /// 4. Debug only: common source-tree locations for `swift run` / Xcode development.
     var helperDirectory: String {
-        ProcessInfo.processInfo.environment["SEMANTIC_HELPER_DIR"]
-            ?? UserDefaults.standard.string(forKey: "helperDirectory")
-            ?? Self.defaultHelperDirectory
+#if DEBUG
+        if let override = ProcessInfo.processInfo.environment["FOSVERA_HELPER_DIR"], !override.isEmpty {
+            return override
+        }
+        // Compatibility with existing development setups that used the former
+        // SEMANTIC_HELPER_DIR name. New docs use FOSVERA_HELPER_DIR.
+        if let override = ProcessInfo.processInfo.environment["SEMANTIC_HELPER_DIR"], !override.isEmpty {
+            return override
+        }
+        if let override = UserDefaults.standard.string(forKey: "helperDirectory"), !override.isEmpty {
+            return override
+        }
+#endif
+        if let bundled = Self.bundledHelperDirectory() {
+            return bundled
+        }
+#if DEBUG
+        return Self.developmentHelperDirectory()
+#else
+        return Self.bundledHelperDirectoryPath() ?? Self.bundledHelperDirectoryName
+#endif
     }
 
     private var mainScript: String {
         (helperDirectory as NSString).appendingPathComponent("main.py")
+    }
+
+    private var bundledHelperExecutable: String {
+        (helperDirectory as NSString).appendingPathComponent(Self.bundledHelperExecutableName)
     }
 
     /// Ceilings for a hung server, not expected durations. Local commands answer
@@ -208,8 +257,7 @@ actor HelperService {
             return .networkUnavailable(message ?? "Gemini is unreachable")
         }
         if errorCode == "invalid_api_key" {
-            return .helperReturnedError(
-                "That API key was rejected by Google. Double-check it in Google AI Studio and paste it again.")
+            return .invalidAPIKey
         }
         if errorCode == "no_api_key" {
             return .helperReturnedError("No Gemini API key is configured yet.")
@@ -299,25 +347,34 @@ actor HelperService {
         }
     }
 
-    /// Spawn `main.py serve` if it isn't already running, and start draining its
-    /// pipes. Requests written before the interpreter finishes importing simply
-    /// wait in the pipe buffer, so there is no startup race.
+    /// Spawn the helper server if it isn't already running, and start draining
+    /// its pipes. In release builds this prefers the frozen helper executable;
+    /// in development it falls back to `python main.py serve`. Requests written
+    /// before the helper finishes importing simply wait in the pipe buffer, so
+    /// there is no startup race.
     private func ensureServerRunning() throws {
         if let server, server.isRunning { return }
         tearDownServer(failingPendingWith: .processFailed("the helper restarted"))
 
         let fileManager = FileManager.default
-        guard fileManager.fileExists(atPath: mainScript) else {
-            throw HelperError.helperNotFound(mainScript)
-        }
-        let python = pythonExecutable()
-        guard fileManager.isExecutableFile(atPath: python) else {
-            throw HelperError.pythonNotFound
-        }
 
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: python)
-        process.arguments = [mainScript, "serve"]
+        if fileManager.isExecutableFile(atPath: bundledHelperExecutable) {
+            process.executableURL = URL(fileURLWithPath: bundledHelperExecutable)
+            process.arguments = ["serve"]
+        } else {
+            guard fileManager.fileExists(atPath: mainScript) else {
+                throw HelperError.helperNotFound(
+                    "\(mainScript) or \(bundledHelperExecutable)"
+                )
+            }
+            let python = pythonExecutable()
+            guard fileManager.isExecutableFile(atPath: python) else {
+                throw HelperError.pythonNotFound
+            }
+            process.executableURL = URL(fileURLWithPath: python)
+            process.arguments = [mainScript, "serve"]
+        }
         process.currentDirectoryURL = URL(fileURLWithPath: helperDirectory)
         process.environment = helperEnvironment()
         let inPipe = Pipe()
@@ -330,7 +387,7 @@ actor HelperService {
             try process.run()
         } catch {
             throw HelperError.processFailed(
-                "could not launch \(python): \(error.localizedDescription)")
+                "could not launch \(process.executableURL?.path ?? "helper"): \(error.localizedDescription)")
         }
 
         server = process
@@ -433,15 +490,38 @@ actor HelperService {
     /// Run a short helper CLI command in its own process. Startup/home commands
     /// use this path so the indexed-files gallery is never blocked by a stale
     /// persistent server.
-    private func runOneShot<T: Decodable>(_ args: [String], as type: T.Type) async throws -> T {
+    ///
+    /// These commands answer from local disk, so `timeout` is a hang ceiling,
+    /// not an expected duration: a helper that blows past it is terminated so
+    /// the UI never waits forever on a wedged process.
+    private func runOneShot<T: Decodable>(
+        _ args: [String],
+        timeout: TimeInterval = HelperService.localTimeout,
+        as type: T.Type
+    ) async throws -> T {
         let (process, outPipe, errPipe) = try makeProcess(args)
         try launch(process)
+
+        let watchdog = Task.detached {
+            try? await Task.sleep(nanoseconds: UInt64(timeout * 1_000_000_000))
+            guard !Task.isCancelled, process.isRunning else { return false }
+            process.terminate()
+            // Give SIGTERM a moment; force-kill if the helper ignores it.
+            try? await Task.sleep(nanoseconds: 5_000_000_000)
+            if process.isRunning { kill(process.processIdentifier, SIGKILL) }
+            return true
+        }
 
         async let stdoutData = readToEnd(outPipe.fileHandleForReading)
         async let stderrData = readToEnd(errPipe.fileHandleForReading)
         let out = await stdoutData
         let err = await stderrData
         process.waitUntilExit()
+        watchdog.cancel()
+        if await watchdog.value {
+            throw HelperError.processFailed(
+                "\(args.first ?? "helper") timed out after \(Int(timeout))s")
+        }
 
         if out.isEmpty {
             let errText = String(data: err, encoding: .utf8) ?? ""
@@ -519,17 +599,24 @@ actor HelperService {
     /// fresh stdout/stderr pipes. Does not start it.
     private func makeProcess(_ args: [String]) throws -> (Process, Pipe, Pipe) {
         let fileManager = FileManager.default
-        guard fileManager.fileExists(atPath: mainScript) else {
-            throw HelperError.helperNotFound(mainScript)
-        }
-        let python = pythonExecutable()
-        guard fileManager.isExecutableFile(atPath: python) else {
-            throw HelperError.pythonNotFound
-        }
 
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: python)
-        process.arguments = [mainScript] + args
+        if fileManager.isExecutableFile(atPath: bundledHelperExecutable) {
+            process.executableURL = URL(fileURLWithPath: bundledHelperExecutable)
+            process.arguments = args
+        } else {
+            guard fileManager.fileExists(atPath: mainScript) else {
+                throw HelperError.helperNotFound(
+                    "\(mainScript) or \(bundledHelperExecutable)"
+                )
+            }
+            let python = pythonExecutable()
+            guard fileManager.isExecutableFile(atPath: python) else {
+                throw HelperError.pythonNotFound
+            }
+            process.executableURL = URL(fileURLWithPath: python)
+            process.arguments = [mainScript] + args
+        }
         process.currentDirectoryURL = URL(fileURLWithPath: helperDirectory)
         process.environment = helperEnvironment()
 
@@ -560,32 +647,106 @@ actor HelperService {
         }
     }
 
-    /// Environment for helper processes: the parent's, plus the Keychain API
-    /// key when the user has stored one. The Keychain key deliberately wins
-    /// over any shell/.env value — it's the explicit in-app setting. Without a
-    /// stored key, nothing is injected and the helper's .env fallback applies
-    /// (the frictionless developer path).
+    /// Environment for helper processes.
+    ///
+    /// Product rule: the macOS app uses the user's Keychain-saved API key, not a
+    /// developer `.env` or inherited shell `GEMINI_API_KEY`. This keeps first-run
+    /// behavior honest for release builds: if the user has not pasted a key into
+    /// Settings, the app should say no key is configured.
+    ///
+    /// Developers can temporarily opt back into environment/.env keys by setting
+    /// `SFF_ALLOW_APP_ENV_API_KEY=1` before launching the app.
     private func helperEnvironment() -> [String: String] {
         var environment = ProcessInfo.processInfo.environment
-        if let key = KeychainStore.readAPIKey() {
+        let allowDeveloperEnvKey = Self.allowsDevelopmentHelperOverrides
+            && Self.envBool(environment["SFF_ALLOW_APP_ENV_API_KEY"])
+        environment["SFF_LOAD_DOTENV"] = allowDeveloperEnvKey ? "1" : "0"
+
+        if let key = KeychainStore.readAPIKey(allowPrompt: false) {
             environment["GEMINI_API_KEY"] = key
+        } else if !allowDeveloperEnvKey {
+            environment.removeValue(forKey: "GEMINI_API_KEY")
         }
         return environment
     }
 
-    /// Prefer the project virtualenv, then a system python3.
+    private static var allowsDevelopmentHelperOverrides: Bool {
+#if DEBUG
+        return true
+#else
+        return false
+#endif
+    }
+
+    private static func envBool(_ raw: String?) -> Bool {
+        guard let raw else { return false }
+        return ["1", "true", "yes", "on"].contains(raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())
+    }
+
+    /// Prefer a bundled/repo virtualenv, then a system python3.
     private func pythonExecutable() -> String {
         let fileManager = FileManager.default
         let repoRoot = (helperDirectory as NSString).deletingLastPathComponent
+        let resourcePython = Bundle.main.resourceURL?
+            .appendingPathComponent("python/bin/python3")
+            .path
         let candidates = [
             (repoRoot as NSString).appendingPathComponent(".venv/bin/python3"),
             (helperDirectory as NSString).appendingPathComponent(".venv/bin/python3"),
+            resourcePython,
             "/opt/homebrew/bin/python3",
             "/usr/bin/python3",
-        ]
+        ].compactMap { $0 }
         for candidate in candidates where fileManager.isExecutableFile(atPath: candidate) {
             return candidate
         }
         return "/usr/bin/python3"
     }
+
+    private static func bundledHelperDirectoryPath() -> String? {
+        Bundle.main.resourceURL?.appendingPathComponent(bundledHelperDirectoryName).path
+    }
+
+    private static func bundledHelperDirectory() -> String? {
+        guard let directory = bundledHelperDirectoryPath() else { return nil }
+        let executable = (directory as NSString).appendingPathComponent(bundledHelperExecutableName)
+        let bundledPython = Bundle.main.resourceURL?
+            .appendingPathComponent("python/bin/python3")
+            .path
+        let helperVenvPython = (directory as NSString).appendingPathComponent(".venv/bin/python3")
+        let main = (directory as NSString).appendingPathComponent("main.py")
+
+        let fileManager = FileManager.default
+        if fileManager.isExecutableFile(atPath: executable) {
+            return directory
+        }
+        if fileManager.fileExists(atPath: main),
+           fileManager.isExecutableFile(atPath: bundledPython ?? "") || fileManager.isExecutableFile(atPath: helperVenvPython) {
+            return directory
+        }
+        return nil
+    }
+
+#if DEBUG
+    private static func developmentHelperDirectory() -> String {
+        let fileManager = FileManager.default
+        let cwd = fileManager.currentDirectoryPath
+        let candidates = [
+            (cwd as NSString).appendingPathComponent("helper"),
+            (cwd as NSString).appendingPathComponent("../helper"),
+            (cwd as NSString).appendingPathComponent("../../helper"),
+            legacyDevelopmentHelperDirectory,
+        ]
+
+        for candidate in candidates {
+            let standardized = URL(fileURLWithPath: candidate).standardizedFileURL.path
+            let main = (standardized as NSString).appendingPathComponent("main.py")
+            if fileManager.fileExists(atPath: main) {
+                return standardized
+            }
+        }
+
+        return legacyDevelopmentHelperDirectory
+    }
+#endif
 }

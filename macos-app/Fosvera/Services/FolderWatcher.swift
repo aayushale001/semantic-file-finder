@@ -13,9 +13,11 @@ final class FolderWatcher {
     var onChange: ((Set<String>) -> Void)?
 
     private var stream: FSEventStreamRef?
-    private var roots: [String] = []
-    private let queue = DispatchQueue(label: "com.semanticfilefinder.folderwatcher")
+    private let queue = DispatchQueue(label: "com.fosvera.folderwatcher")
+    /// Guards `roots`, `pending`, and `flushWork` — all are touched both by the
+    /// main thread (start/stop) and by the FSEvents callback on `queue`.
     private let lock = NSLock()
+    private var roots: [String] = []
     private var pending = Set<String>()
     private var flushWork: DispatchWorkItem?
 
@@ -27,13 +29,16 @@ final class FolderWatcher {
     /// Begin watching exactly `paths`, replacing any current watch.
     func start(paths: [String]) {
         stop()
-        roots = paths.map {
+        let normalized = paths.map {
             URL(fileURLWithPath: $0)
                 .standardizedFileURL
                 .resolvingSymlinksInPath()
                 .path
         }
-        guard !roots.isEmpty else { return }
+        lock.lock()
+        roots = normalized
+        lock.unlock()
+        guard !normalized.isEmpty else { return }
 
         var context = FSEventStreamContext(
             version: 0,
@@ -67,7 +72,7 @@ final class FolderWatcher {
             kCFAllocatorDefault,
             callback,
             &context,
-            roots as CFArray,
+            normalized as CFArray,
             FSEventStreamEventId(kFSEventStreamEventIdSinceNow),
             0.5,                       // FSEvents native coalescing latency (seconds)
             flags
@@ -85,8 +90,11 @@ final class FolderWatcher {
             FSEventStreamRelease(stream)
         }
         stream = nil
-        lock.lock(); pending.removeAll(); lock.unlock()
-        flushWork?.cancel(); flushWork = nil
+        lock.lock()
+        pending.removeAll()
+        flushWork?.cancel()
+        flushWork = nil
+        lock.unlock()
     }
 
     /// Map changed paths to the watched roots that contain them, then debounce.
@@ -102,7 +110,6 @@ final class FolderWatcher {
     }
 
     private func scheduleFlush() {
-        flushWork?.cancel()
         let work = DispatchWorkItem { [weak self] in
             guard let self else { return }
             self.lock.lock()
@@ -112,7 +119,10 @@ final class FolderWatcher {
             guard !changedRoots.isEmpty else { return }
             DispatchQueue.main.async { self.onChange?(changedRoots) }
         }
+        lock.lock()
+        flushWork?.cancel()
         flushWork = work
+        lock.unlock()
         queue.asyncAfter(deadline: .now() + debounce, execute: work)
     }
 }

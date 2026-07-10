@@ -46,7 +46,7 @@ struct HelpView: View {
                 .foregroundStyle(.tint)
 
             VStack(alignment: .leading, spacing: 3) {
-                Text("How Semantic File Finder Works")
+                Text("How Fosvera Works")
                     .font(.title2.weight(.semibold))
 
                 Text("Search your files by meaning instead of exact names.")

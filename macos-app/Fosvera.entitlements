@@ -2,8 +2,9 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-    <!-- MVP dev tool: sandbox disabled so the app can spawn the Python helper
-         and read user-selected folders. Re-enable before distribution. -->
+    <!-- Developer ID / GitHub releases can be notarized without the Mac App
+         Store sandbox. Keep this disabled until the app is redesigned around
+         security-scoped bookmarks for a future App Store build. -->
     <key>com.apple.security.app-sandbox</key>
     <false/>
 </dict>

@@ -1,4 +1,4 @@
-# Semantic File Finder
+# Fosvera
 
 A native macOS app that indexes one or more folders of your files and lets you
 search them by **meaning** instead of filename — across text **and media**. A SwiftUI front
@@ -21,6 +21,20 @@ Supported files:
 - **Code**: `.py` `.js` `.ts` `.tsx` `.jsx` `.cpp` `.c` `.h` `.hpp` `.java` `.html` `.css` `.json`
 - **Images**: `.jpg` `.jpeg` `.png`
 - **Audio**: `.mp3` `.wav`  ·  **Video**: `.mp4` `.mov`
+
+## Download / release status
+
+Signed public builds are not published yet. The planned first public release path
+is a GitHub Release with a Developer ID signed, notarized `.dmg` plus
+`SHA256SUMS.txt`.
+
+Maintainer release docs:
+
+- [GitHub release guide](docs/RELEASE.md)
+- [Privacy policy](PRIVACY.md)
+- [Gemini API key setup](docs/GEMINI_API_KEY.md)
+- [Uninstall and delete local data](docs/UNINSTALL.md)
+- [Security policy](SECURITY.md)
 
 Text/docs/code are extracted and chunked; images/audio/video are embedded directly
 as media. To stay fast on big files, video is sampled into evenly-spaced still
@@ -57,9 +71,9 @@ also exist as a plain CLI for scripting and debugging.
 ├── macos-app/
 │   ├── Package.swift                # swift run (fastest dev path)
 │   ├── project.yml                  # XcodeGen spec for a real .app
-│   ├── SemanticFileFinder.entitlements
-│   └── SemanticFileFinder/
-│       ├── SemanticFileFinderApp.swift
+│   ├── Fosvera.entitlements
+│   └── Fosvera/
+│       ├── FosveraApp.swift
 │       ├── ContentView.swift
 │       ├── Models/SearchResult.swift
 │       ├── Services/HelperService.swift
@@ -71,7 +85,10 @@ also exist as a plain CLI for scripting and debugging.
 │   ├── extractors/{text,code,pdf,docx}_extractor.py
 │   └── requirements.txt
 ├── test_files/                      # sample files to index
+├── docs/{RELEASE,GEMINI_API_KEY,UNINSTALL}.md
+├── scripts/{build-helper,build-app,release-preflight,checksums}.sh
 ├── .env.example
+├── PRIVACY.md  SECURITY.md  CHANGELOG.md  LICENSE
 └── setup.sh
 ```
 
@@ -93,9 +110,15 @@ Settings, and **Save & Test** validates it with a lightweight `models.list`
 metadata call and stores it in the **macOS Keychain** — never in a plaintext
 file.
 
-For CLI use or development you can instead put the key in a `.env` at the repo
-root (`cp .env.example .env`, then set `GEMINI_API_KEY`). A key saved in the
-app takes precedence over `.env`.
+Detailed setup, rotation, and removal steps are in
+[docs/GEMINI_API_KEY.md](docs/GEMINI_API_KEY.md).
+
+For CLI use you can instead put the key in a `.env` at the repo root
+(`cp .env.example .env`, then set `GEMINI_API_KEY`). The macOS app ignores
+`.env` by default and uses the Keychain key saved from Settings, so release users
+do not accidentally inherit a developer key. During local development only, you
+can opt back into environment/`.env` keys by launching the app with
+`SFF_ALLOW_APP_ENV_API_KEY=1`.
 
 ## Embedding model
 
@@ -172,14 +195,17 @@ swift run
 brew install xcodegen
 cd macos-app
 xcodegen generate
-open SemanticFileFinder.xcodeproj   # then Run (⌘R)
+open Fosvera.xcodeproj   # then Run (⌘R)
 ```
 
 The app finds the helper at `helper/` next to this repo and automatically prefers
-the project `.venv`. To point it elsewhere, set the `SEMANTIC_HELPER_DIR`
-environment variable or the `helperDirectory` UserDefaults key. The app sandbox is
-intentionally **off** in this development build so it can run the helper and read
-the folder you pick — re-enable it before any distribution.
+the project `.venv`. For releases, the app first looks for a bundled helper at
+`Contents/Resources/helper/fosvera-helper`; for development, set the
+`FOSVERA_HELPER_DIR` environment variable or the `helperDirectory` UserDefaults
+key if your helper lives somewhere custom. The App Store sandbox is intentionally
+**off** in this development build so it can run the helper and read the folder you
+pick; the direct GitHub release path uses Developer ID signing/notarization first,
+with App Store sandboxing left for a later pass.
 
 Use it: **Add Folder → Index All** (a live progress bar shows files done /
 remaining) **→ type a query → Return → Open**. You can watch multiple folders;
@@ -193,18 +219,34 @@ internet access because Gemini creates embeddings for your files and queries.
 
 ## Local storage
 
+The Fosvera rebrand intentionally keeps this established local directory so
+existing tester indexes remain available.
+
 ```
 ~/.semantic_file_finder/
 ├── index.lance/        # LanceDB database (table: chunks)
 ├── index_meta.json     # embedding provider/model/dimensions/created_at
-├── settings.json
 └── logs/
 ```
+
+To fully uninstall the app, delete the index, and remove the Keychain API key,
+follow [docs/UNINSTALL.md](docs/UNINSTALL.md).
+
+## Privacy and security
+
+Fosvera is local-first, but semantic indexing/search calls Gemini
+directly with your API key. During indexing, supported file content or media
+segments are sent to Gemini to create embeddings. During semantic search, your
+query text is sent to Gemini to create the query embedding. The local index stays
+on your Mac.
+
+Read the full [privacy policy](PRIVACY.md) and [security policy](SECURITY.md)
+before publishing a public build.
 
 ## Troubleshooting
 
 - **"No Gemini API key is configured"** — paste your key in the app's Settings
-  (gear icon), or add it to `.env` for CLI use (needed for `index`/`search`,
+  (gear icon). For CLI use, add it to `.env` (needed for `index`/`search`,
   not for `status`/`model-info`/`reset`). Validate with
   `python helper/main.py check-key`.
 - **Model "not found" from the API** — confirm your key has access to
@@ -215,8 +257,9 @@ internet access because Gemini creates embeddings for your files and queries.
 - **No internet / Gemini unreachable** — already-indexed files remain browseable,
   and search falls back to local filename/path/text matching. Indexing and
   semantic search resume when internet access is back.
-- **App can't find the helper** — set `SEMANTIC_HELPER_DIR` to the absolute path of
+- **App can't find the helper** — set `FOSVERA_HELPER_DIR` to the absolute path of
   the `helper/` directory.
+- **Want to fully uninstall** — see [docs/UNINSTALL.md](docs/UNINSTALL.md).
 
 ## Current limitations / roadmap
 
@@ -228,7 +271,8 @@ filename/text fallback. Still planned:
 - Smart folders, saved searches, and auto-tagging.
 - More granular per-file incremental indexing for very large watched folders.
 - Optional hybrid keyword + semantic scoring for online search.
-- A distributable, sandboxed, signed/notarized macOS app bundle.
+- App Store sandboxing with security-scoped bookmarks, if an App Store release is
+  pursued later.
 
 ## License
 

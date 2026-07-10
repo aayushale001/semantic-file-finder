@@ -1,9 +1,11 @@
 # XcodeGen spec. Generate the Xcode project with:
 #   brew install xcodegen
 #   cd macos-app && xcodegen generate
-#   open SemanticFileFinder.xcodeproj
-name: SemanticFileFinder
+#   open Fosvera.xcodeproj
+name: Fosvera
 options:
+  # Keep the established technical identity so existing tester preferences and
+  # Keychain access survive the Fosvera rebrand.
   bundleIdPrefix: com.semanticfilefinder
   deploymentTarget:
     macOS: "14.0"
@@ -13,19 +15,54 @@ settings:
     CURRENT_PROJECT_VERSION: "1"
     SWIFT_VERSION: "5.0"
 targets:
-  SemanticFileFinder:
+  Fosvera:
     type: application
     platform: macOS
     sources:
-      - SemanticFileFinder
+      - Fosvera
+    postBuildScripts:
+      - name: Copy Frozen Helper
+        basedOnDependencyAnalysis: false
+        script: |
+          set -euo pipefail
+
+          HELPER_SRC="${SRCROOT}/../dist/helper"
+          HELPER_EXE="${HELPER_SRC}/fosvera-helper"
+          HELPER_DST="${TARGET_BUILD_DIR}/${UNLOCALIZED_RESOURCES_FOLDER_PATH}/helper"
+
+          if [ ! -x "${HELPER_EXE}" ]; then
+            if [ "${CONFIGURATION}" = "Release" ]; then
+              echo "error: Frozen helper is missing. Run ./scripts/build-helper.sh before archiving a release."
+              exit 1
+            fi
+            echo "warning: Frozen helper is missing; Debug app will fall back to source helper discovery."
+            exit 0
+          fi
+
+          echo "Copying frozen helper to ${HELPER_DST}"
+          rm -rf "${HELPER_DST}"
+          mkdir -p "$(dirname "${HELPER_DST}")"
+          # Do not carry Desktop/iCloud Finder metadata into the signed app.
+          ditto --norsrc --noextattr "${HELPER_SRC}" "${HELPER_DST}"
     settings:
       base:
+        # Intentionally stable across user-facing brand changes.
         PRODUCT_BUNDLE_IDENTIFIER: com.semanticfilefinder.app
         GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: "Fosvera"
         INFOPLIST_KEY_LSApplicationCategoryType: "public.app-category.utilities"
-        # Development build: the App Sandbox is OFF so the app can run the Python
-        # helper via Process and read user-chosen folders. Turn this back on
-        # (with the right entitlements) before any distribution.
-        ENABLE_HARDENED_RUNTIME: NO
-        CODE_SIGN_ENTITLEMENTS: SemanticFileFinder.entitlements
+        INFOPLIST_KEY_NSHumanReadableCopyright: "Copyright © 2026 aayushale001"
+        # Developer ID releases should use Hardened Runtime for notarization.
+        # Debug keeps it off to avoid slowing local helper iteration.
+        ENABLE_HARDENED_RUNTIME: YES
+        CODE_SIGN_ENTITLEMENTS: Fosvera.entitlements
         CODE_SIGN_STYLE: Automatic
+        # Stored here (rather than only in Xcode's generated project) so every
+        # XcodeGen archive uses the same Developer ID team.
+        DEVELOPMENT_TEAM: 388S76726C
+      configs:
+        Debug:
+          ENABLE_HARDENED_RUNTIME: NO
+          SWIFT_ACTIVE_COMPILATION_CONDITIONS: DEBUG
+        Release:
+          ENABLE_HARDENED_RUNTIME: YES

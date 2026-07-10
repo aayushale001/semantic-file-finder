@@ -1,4 +1,4 @@
-"""Central configuration for the Semantic File Finder helper.
+"""Central configuration for the Fosvera helper.
 
 Reads settings from environment variables (optionally via a .env file) and
 exposes paths, model settings, chunking parameters and the supported file
@@ -9,28 +9,42 @@ from __future__ import annotations
 
 import logging
 import os
+import sys
 from pathlib import Path
 
 from dotenv import load_dotenv
 
-# Load a .env from the repo root (one level up from helper/) and from the CWD.
 _HELPER_DIR = Path(__file__).resolve().parent
 _REPO_ROOT = _HELPER_DIR.parent
-load_dotenv(_REPO_ROOT / ".env")
-load_dotenv()  # also honor a .env in the current working directory
 
 
-def _env_bool(name: str, default: bool = False) -> bool:
+def _raw_env_bool(name: str, default: bool = False) -> bool:
     raw = os.getenv(name)
     if raw is None:
         return default
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
+
+# Source/CLI development may read .env. Frozen release helpers do not read .env
+# by default so the macOS app cannot silently pick up a developer key from the
+# launch directory or one of its parents. The Swift app also sets this to "0"
+# unless an explicit developer override is used.
+_DEFAULT_LOAD_DOTENV = not getattr(sys, "frozen", False)
+if _raw_env_bool("SFF_LOAD_DOTENV", _DEFAULT_LOAD_DOTENV):
+    # Load a .env from the repo root (one level up from helper/) and from the CWD.
+    load_dotenv(_REPO_ROOT / ".env")
+    load_dotenv()  # also honor a .env in the current working directory
+
+
+def _env_bool(name: str, default: bool = False) -> bool:
+    return _raw_env_bool(name, default)
+
 # --- Paths -------------------------------------------------------------------
+# Keep this pre-release directory stable so existing tester indexes remain
+# available after the Fosvera rebrand.
 APP_DATA_DIR = Path(os.path.expanduser(os.getenv("APP_DATA_DIR", "~/.semantic_file_finder")))
 DB_PATH = APP_DATA_DIR / "index.lance"
 LOG_DIR = APP_DATA_DIR / "logs"
-SETTINGS_PATH = APP_DATA_DIR / "settings.json"
 INDEX_META_PATH = APP_DATA_DIR / "index_meta.json"
 TABLE_NAME = "chunks"
 
@@ -101,6 +115,19 @@ CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP", "200"))  # overlap in chars (150-
 PREVIEW_MAX = 300                                       # max chars in content_preview
 CODE_CHUNK_LINES = int(os.getenv("CODE_CHUNK_LINES", "120"))  # lines per code chunk (80-150)
 
+# --- Per-file indexing budgets ----------------------------------------------
+# These caps keep one pathological file from freezing the app or generating
+# hundreds/thousands of Gemini embedding calls. Files over a budget are skipped
+# with a clear entry in the index summary's errors[] array.
+MAX_TEXT_FILE_BYTES = int(os.getenv("MAX_TEXT_FILE_BYTES", str(5 * 1024 * 1024)))
+MAX_CODE_FILE_BYTES = int(os.getenv("MAX_CODE_FILE_BYTES", str(5 * 1024 * 1024)))
+MAX_PDF_FILE_BYTES = int(os.getenv("MAX_PDF_FILE_BYTES", str(50 * 1024 * 1024)))
+MAX_DOCX_FILE_BYTES = int(os.getenv("MAX_DOCX_FILE_BYTES", str(50 * 1024 * 1024)))
+MAX_MEDIA_FILE_BYTES = int(os.getenv("MAX_MEDIA_FILE_BYTES", str(250 * 1024 * 1024)))
+MAX_EXTRACTED_CHARS_PER_FILE = int(os.getenv("MAX_EXTRACTED_CHARS_PER_FILE", "500000"))
+MAX_CHUNKS_PER_FILE = int(os.getenv("MAX_CHUNKS_PER_FILE", "500"))
+MAX_PDF_PAGES = int(os.getenv("MAX_PDF_PAGES", "250"))
+
 # --- Scanning ----------------------------------------------------------------
 # extension -> modality
 SUPPORTED_EXTENSIONS = {
@@ -150,6 +177,9 @@ MIME_BY_EXT = {
 AUDIO_SEGMENT_SECONDS = int(os.getenv("AUDIO_SEGMENT_SECONDS", "170"))
 # Segments larger than this are uploaded via the Files API instead of sent inline.
 MEDIA_INLINE_MAX_BYTES = int(os.getenv("MEDIA_INLINE_MAX_BYTES", str(15 * 1024 * 1024)))
+# Absolute per-segment upload cap. This prevents unreadable media-duration
+# fallbacks from uploading one huge whole file to Gemini Files API.
+MAX_MEDIA_SEGMENT_BYTES = int(os.getenv("MAX_MEDIA_SEGMENT_BYTES", str(50 * 1024 * 1024)))
 
 # Per-file caps so one huge file can't balloon into hundreds of API calls.
 # Video is sampled as still frames (cheap inline images); long audio is sampled
@@ -163,6 +193,10 @@ MEDIA_EMBED_CONCURRENCY = int(os.getenv("MEDIA_EMBED_CONCURRENCY", "5"))
 VIDEO_FRAME_INTERVAL_SECONDS = int(os.getenv("VIDEO_FRAME_INTERVAL_SECONDS", "10"))
 # Hard timeout (seconds) for any ffmpeg invocation (probe / slice / frame grab).
 FFMPEG_TIMEOUT_SECONDS = int(os.getenv("FFMPEG_TIMEOUT_SECONDS", "120"))
+# Hard timeout (seconds) for text extraction from one file. Size/page budgets
+# bound memory but not CPU time — a pathological PDF can send the parser into
+# an effectively infinite loop, and this keeps it from hanging indexing.
+EXTRACT_TIMEOUT_SECONDS = int(os.getenv("EXTRACT_TIMEOUT_SECONDS", "120"))
 # Skip whole-file content hashing above this size (hash is metadata only).
 MEDIA_HASH_MAX_BYTES = int(os.getenv("MEDIA_HASH_MAX_BYTES", str(64 * 1024 * 1024)))
 
@@ -199,7 +233,11 @@ def setup_logging() -> None:
         import sys
         handlers.append(logging.StreamHandler(sys.stderr))
     try:
-        handlers.append(logging.FileHandler(LOG_DIR / "helper.log"))
+        from logging.handlers import RotatingFileHandler
+        # Rotate so a long-lived serve process can never grow the log unboundedly.
+        handlers.append(RotatingFileHandler(
+            LOG_DIR / "helper.log", maxBytes=2 * 1024 * 1024, backupCount=3
+        ))
     except Exception:
         pass
 
